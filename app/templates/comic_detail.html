@@ -99,14 +99,18 @@
       </details>
     {% endif %}
 
-    <button type="button"
-            hx-post="/comic/{{ comic.id }}/delete"
-            hx-confirm="Delete this comic and all its copies?"
-            class="mt-4 w-full rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold text-red-700 shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
-      Delete comic
-    </button>
-
         </details>{# closes Cover & source disclosure #}
+
+        {# Delete lives OUTSIDE the disclosure so it's always reachable
+           — previously it was buried inside the "Cover & source" panel
+           that's collapsed by default on mobile, making it look like
+           single-comic delete didn't exist. #}
+        <button type="button"
+                hx-post="/comic/{{ comic.id }}/delete"
+                hx-confirm="Delete this comic and ALL its copies? This also prunes the series if it becomes empty. No undo."
+                class="mt-4 w-full rounded-lg border-2 border-black bg-red-500 px-3 py-2 text-xs font-semibold text-white shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5 hover:bg-red-600">
+          🗑 Delete comic
+        </button>
       </div>{# closes right column on mobile #}
     </div>{# closes flex container #}
   </aside>
