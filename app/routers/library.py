@@ -568,3 +568,68 @@ async def library_bulk_edit(
 
     await session.commit()
     return RedirectResponse(url=return_to or "/library", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Bulk delete
+# ---------------------------------------------------------------------------
+
+
+@router.post("/library/bulk-delete")
+async def library_bulk_delete(
+    request: Request,
+    session: SessionDep,
+    comic_id: list[int] = Form(default=[]),
+    confirm: str = Form(default=""),
+    return_to: str = Form(default="/library"),
+) -> RedirectResponse:
+    """Delete every selected comic + its copies + its now-orphan series.
+
+    The UI fires this with a JS `confirm(...)` blocker; `confirm=yes` is
+    a server-side safety belt so a misconfigured curl can't wipe data
+    without explicit intent. Mirrors `/comic/{id}/delete`'s cascade
+    semantics so library bulk delete and single delete leave the DB in
+    the same shape.
+    """
+    if not comic_id or confirm != "yes":
+        return RedirectResponse(url=return_to or "/library", status_code=303)
+
+    from sqlalchemy import delete as sa_delete
+
+    # Snapshot the series_ids first so we can prune orphans after the
+    # comics are gone. `session.exec(select(col))` returns scalars for a
+    # single-column query, not tuples.
+    rows = (
+        await session.exec(
+            select(Comic.series_id).where(Comic.id.in_(comic_id))
+        )
+    ).all()
+    series_ids = {
+        (r[0] if isinstance(r, tuple) else r) for r in rows
+        if (r[0] if isinstance(r, tuple) else r) is not None
+    }
+
+    # Cascade delete: link tables first, then Copy, then Comic.
+    await session.exec(sa_delete(ComicTag).where(ComicTag.comic_id.in_(comic_id)))
+    await session.exec(sa_delete(ComicArc).where(ComicArc.comic_id.in_(comic_id)))
+    # ComicCreator lives in models too; clear it as well.
+    from app.models import ComicCreator
+    await session.exec(sa_delete(ComicCreator).where(ComicCreator.comic_id.in_(comic_id)))
+    await session.exec(sa_delete(Copy).where(Copy.comic_id.in_(comic_id)))
+    await session.exec(sa_delete(Comic).where(Comic.id.in_(comic_id)))
+    await session.commit()
+
+    # Prune now-empty series so the library facets don't show ghosts.
+    if series_ids:
+        for sid in series_ids:
+            remaining = (await session.exec(
+                select(func.count(Comic.id)).where(Comic.series_id == sid)
+            )).first()
+            n = remaining[0] if isinstance(remaining, tuple) else remaining
+            if int(n or 0) == 0:
+                ghost = await session.get(Series, sid)
+                if ghost is not None:
+                    await session.delete(ghost)
+        await session.commit()
+
+    return RedirectResponse(url=return_to or "/library", status_code=303)

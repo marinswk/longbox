@@ -216,3 +216,159 @@ def test_library_page_includes_bulk_bar_markup():
         assert 'id="lb-bulk-bar"' in r.text
         assert 'lb-bulk-check' in r.text
         assert 'window.lbBulk' in r.text
+
+
+# ─────────────────────────  Bulk delete  ───────────────────────── #
+
+
+def test_bulk_delete_removes_selected_comics_and_their_copies():
+    with _client() as client:
+        a = _save(client, title="Del A", isbn_13="9789000000501", series="Del Series A")
+        b = _save(client, title="Del B", isbn_13="9789000000502", series="Del Series B")
+        keep = _save(client, title="Keep", isbn_13="9789000000503", series="Keep Series")
+
+        r = client.post("/library/bulk-delete", data={
+            "comic_id": [a, b],
+            "confirm": "yes",
+        }, follow_redirects=False)
+        assert r.status_code == 303
+
+        # a + b are gone; keep is still there.
+        assert _comic(a) is None
+        assert _comic(b) is None
+        assert _comic(keep) is not None
+        # Their copies are gone too.
+        assert _first_copy(a) is None
+        assert _first_copy(b) is None
+
+
+def test_bulk_delete_without_confirm_is_a_noop():
+    """Server-side safety belt — even if the JS confirm() is bypassed,
+    a POST without `confirm=yes` must NOT delete anything."""
+    with _client() as client:
+        cid = _save(client, title="Safe", isbn_13="9789000000601",
+                    series="Safe Series")
+        r = client.post("/library/bulk-delete", data={
+            "comic_id": [cid],
+            # confirm omitted
+        }, follow_redirects=False)
+        assert r.status_code == 303
+        assert _comic(cid) is not None
+
+
+def test_bulk_delete_prunes_orphan_series():
+    """When the last comic in a series is deleted, the Series row should
+    be pruned so library facets don't show ghost entries."""
+    import asyncio
+    from app.models import Series
+
+    with _client() as client:
+        cid = _save(client, title="Orph", isbn_13="9789000000701",
+                    series="OrphSeries-9789000000701", publisher="OrphPub")
+        comic = _comic(cid)
+        sid = comic.series_id
+        assert sid is not None
+
+        client.post("/library/bulk-delete", data={
+            "comic_id": [cid],
+            "confirm": "yes",
+        }, follow_redirects=False)
+
+        async def _series_exists():
+            async with SessionLocal() as session:
+                return await session.get(Series, sid)
+
+        assert asyncio.run(_series_exists()) is None
+
+
+def test_library_page_renders_delete_button_in_bulk_bar():
+    with _client() as client:
+        _save(client, title="Btn Probe", isbn_13="9789000000801",
+              series="Btn Series")
+        r = client.get("/library")
+        assert r.status_code == 200
+        # The Delete button posts to /library/bulk-delete via formaction.
+        assert 'formaction="/library/bulk-delete"' in r.text
+        # JS confirm() helper is wired so dead clicks don't fire DELETE.
+        assert "lbBulkConfirmDelete" in r.text
+
+
+# ─────────────────────────  Save-flow metadata fill  ───────────── #
+#
+# Regression: when adding a comic from Wookieepedia, the save flow used
+# to skip source-only fields (collected_issues, format, language, era,
+# canon, timeline) under some conditions; only a manual refresh would
+# populate them. `_backfill_metadata` must always fill these from the
+# candidate since they never appear on the confirm form (no user input
+# to clobber).
+
+
+def test_backfill_always_fills_source_only_fields_even_without_force():
+    """force=False is the save-time default. Source-only fields should
+    still be written from the candidate so save ↔ refresh agree."""
+    import asyncio
+
+    from app.routers.add import _backfill_metadata
+    from app.services.schemas import LookupCandidate
+
+    with _client() as client:
+        cid = _save(client, title="SrcOnly", isbn_13="9789000000901",
+                    series="SrcOnly Series")
+
+        cand = LookupCandidate(
+            source="wookieepedia",
+            source_id="Fake Article",
+            title=None,  # don't clobber user title
+            collected_issues="Issue #1\nIssue #2",
+            format="trade paperback",
+            language="english",
+            era="rise of the empire era",
+            canon="canon",
+            timeline="22 BBY",
+        )
+
+        async def _run():
+            async with SessionLocal() as session:
+                comic = await session.get(Comic, cid)
+                await _backfill_metadata(session, comic, cand)
+                await session.refresh(comic)
+                return comic
+        comic = asyncio.run(_run())
+        # Source-only fields all populated despite force=False default.
+        assert comic.collected_issues == "Issue #1\nIssue #2"
+        assert comic.format == "trade paperback"
+        assert comic.language == "english"
+        assert comic.era == "rise of the empire era"
+        assert comic.canon == "canon"
+        assert comic.timeline == "22 BBY"
+        # User-editable title was left intact (candidate.title was None).
+        assert comic.title == "SrcOnly"
+
+
+def test_backfill_does_not_clobber_user_edited_title_when_not_forced():
+    """The flip side: title IS a confirm-form field, so save flow must
+    respect a user-set title even if the candidate has its own."""
+    import asyncio
+
+    from app.routers.add import _backfill_metadata
+    from app.services.schemas import LookupCandidate
+
+    with _client() as client:
+        cid = _save(client, title="User Chose This", isbn_13="9789000001001",
+                    series="UC Series")
+
+        cand = LookupCandidate(
+            source="wookieepedia",
+            source_id="Fake",
+            title="Upstream Title That Should NOT Win",
+            description="Upstream description that also should not win",
+        )
+
+        async def _run():
+            async with SessionLocal() as session:
+                comic = await session.get(Comic, cid)
+                await _backfill_metadata(session, comic, cand)
+                await session.refresh(comic)
+                return comic
+        comic = asyncio.run(_run())
+        assert comic.title == "User Chose This"

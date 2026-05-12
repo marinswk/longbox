@@ -267,10 +267,19 @@
         Mark first copy read
       </label>
 
-      <div class="ml-auto flex gap-2">
+      <div class="ml-auto flex flex-wrap gap-2">
         <button type="button" onclick="lbBulk.clear()"
                 class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000]">
           Clear
+        </button>
+        {# Bulk delete: posts to a separate endpoint via `formaction`.
+           The JS confirm() is the user-facing safety net; the server
+           also requires `confirm=yes` as a backstop. #}
+        <button type="submit"
+                formaction="/library/bulk-delete"
+                onclick="return lbBulkConfirmDelete(this.form);"
+                class="rounded-lg border-2 border-black bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-[2px_2px_0_0_#000] hover:bg-red-600">
+          Delete…
         </button>
         <button type="submit"
                 class="rounded-lg border-4 border-black bg-crawl px-4 py-1.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000]">
@@ -278,10 +287,12 @@
         </button>
       </div>
     </div>
+    <input type="hidden" name="confirm" id="lb-bulk-delete-confirm" value="" />
     <p class="mt-2 text-[11px] text-gray-600">
       Empty fields are left untouched. Storage applies to every copy of each
       selected comic. "Mark read" flips the first not-yet-read copy with
-      today's date.
+      today's date. <strong>Delete</strong> removes the selected comics +
+      all their copies and prunes any series left empty — no undo.
     </p>
   </form>
 </div>
@@ -336,6 +347,22 @@
     });
     window.lbBulk = { update, clear };
     render();
+
+    // Delete-button click handler. Returns true to let the form submit
+    // (after stamping `confirm=yes`), false to block. We type-check the
+    // count instead of trusting the rendered <span> in case the user
+    // somehow triggers this with zero selected.
+    window.lbBulkConfirmDelete = function (form) {
+      const n = selected.size;
+      if (!n) return false;
+      const msg =
+        `Delete ${n} comic${n === 1 ? '' : 's'} and ALL their copies?\n\n` +
+        `This also prunes any series left empty. There is no undo.`;
+      if (!window.confirm(msg)) return false;
+      const hidden = form.querySelector('#lb-bulk-delete-confirm');
+      if (hidden) hidden.value = 'yes';
+      return true;
+    };
   })();
 </script>
 

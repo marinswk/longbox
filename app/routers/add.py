@@ -573,10 +573,20 @@ async def _backfill_metadata(
         except (TypeError, ValueError):
             pass
 
+    # Source-only fields never surface on the confirm form, so the user
+    # can't have a manual edit we'd be clobbering. Always write them
+    # from the candidate, even when `force=False`. This was the cause of
+    # the "save misses collected_issues; refresh fixes it" bug: a fresh
+    # Comic has these blank → the `not getattr(...)` guard SHOULD pass,
+    # but if any of these ever land non-null on the row (e.g. via CSV
+    # import) the save flow would skip them silently. Forcing them keeps
+    # save and refresh symmetric.
+    SOURCE_ONLY = {"collected_issues", "format", "language", "timeline", "era", "canon"}
+
     for attr, value in field_map.items():
         if value is None:
             continue
-        if force or not getattr(comic, attr):
+        if force or attr in SOURCE_ONLY or not getattr(comic, attr):
             if getattr(comic, attr) != value:
                 setattr(comic, attr, value)
                 changed = True

@@ -140,6 +140,8 @@
     let busy = false;     // scanning in progress
     let firing = false;   // we already got a hit, don't fire again
     let torchOn = false;  // current torch state (best-effort)
+    let frameTick = 0;    // diagnostic: counts per-frame failure callbacks
+    let lastErr = '';     // diagnostic: most recent per-frame error name
 
     function setMsg(text, kind) {
       msg.textContent = text;
@@ -186,51 +188,55 @@
       setMsg('Starting camera…');
 
       qr = new Html5Qrcode(elementId, {
-        // Use the browser's native BarcodeDetector when present (Chrome /
-        // Edge / Samsung Internet on Android have shipped it since 2020).
-        // Falls back to the pure-JS decoder otherwise. Native is
-        // dramatically faster + more reliable on real-world barcodes.
-        // The old `formatsToSupport: [enum.EAN_13, …]` restriction was
-        // removed because (a) the named enum isn't always on `window` at
-        // config-construction time, (b) native BarcodeDetector doesn't
-        // honor it anyway — the small perf win from filtering JS formats
-        // isn't worth the brittleness.
+        // Native BarcodeDetector when present (Chromium on Android since
+        // 2020). JS fallback elsewhere. No `formatsToSupport` filter — the
+        // named enum isn't reliably on `window` at config-build time and
+        // the perf hit from scanning all formats is small on real devices.
         experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+        verbose: false,
       });
 
       const config = {
         fps: 15,
-        // Wide-and-short detection zone matches what the corner brackets
-        // suggest visually. Sized generously so the user doesn't need
-        // pixel-perfect aim.
-        qrbox: (vw, vh) => {
-          const w = Math.min(vw * 0.85, 420);
-          const h = Math.min(vh * 0.45, 200);
-          return { width: Math.floor(w), height: Math.floor(h) };
-        },
-        aspectRatio: 4 / 3,
-        // Request a higher-resolution feed so small barcode print is
-        // legible. The browser will negotiate down on devices that
-        // can't deliver. Without this the default is often 640×480
-        // which is too low for an ISBN at arm's length.
-        videoConstraints: {
-          facingMode: { ideal: 'environment' },
-          width:  { ideal: 1920 },
-          height: { ideal: 1080 },
-          // `focusMode: continuous` keeps autofocus active so the
-          // barcode stays sharp as the user adjusts distance.
-          advanced: [{ focusMode: 'continuous' }],
-        },
+        // Scan zone covers almost the whole preview so users don't need
+        // pixel-perfect aim. The visual corner brackets are decorative;
+        // the actual detection happens inside this rectangle.
+        qrbox: (vw, vh) => ({
+          width:  Math.max(160, Math.floor(vw * 0.92)),
+          height: Math.max(120, Math.floor(vh * 0.6)),
+        }),
+        // Disable the library's mirroring quirk for the rear camera —
+        // some Android stacks send a flipped preview by default and the
+        // decoder then can't parse barcodes (they look reversed).
+        disableFlip: true,
       };
+
+      // Camera constraints. Passed as the FIRST argument to `start()`
+      // (the `cameraIdOrConfig` slot) so the library uses them
+      // unambiguously — the older `config.videoConstraints` path was
+      // being silently merged in a way that produced low-res previews
+      // on some devices.
+      const cameraConstraints = {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 },
+        // `focusMode: continuous` keeps autofocus active as the user
+        // adjusts distance. Best-effort — Firefox often ignores this.
+        advanced: [{ focusMode: 'continuous' }],
+      };
+
       try {
         await qr.start(
-          { facingMode: 'environment' },
+          cameraConstraints,
           config,
           onDecoded,
-          () => {} // per-frame failures: ignore
+          onScanFailure,
         );
-        setMsg('Aim at a barcode — hold steady, ~10 cm away.');
-        // Expose the torch toggle if the active track supports it.
+        // Read the actual negotiated resolution + format-detection path
+        // back from the active MediaStreamTrack and surface them so the
+        // user can debug why a scan might be failing.
+        await reportCameraState();
+        // Expose torch if the device supports it.
         await maybeShowTorch();
       } catch (err) {
         const msgText =
@@ -267,6 +273,46 @@
       } catch {
         setMsg('Couldn\'t toggle torch on this device.', 'error');
       }
+    }
+
+    // Per-frame failure callback. html5-qrcode invokes this every frame
+    // where it couldn't decode a barcode — normal until the user aims at
+    // one. We use it as a heartbeat so the status line shows the scanner
+    // is alive (vs "wedged after start"). On Android Firefox in
+    // particular, the silent-no-callback failure mode used to leave the
+    // overlay looking dead — the ticking counter rules that out.
+    function onScanFailure(err) {
+      frameTick++;
+      try {
+        lastErr = (err && (err.name || err.message)) || String(err || '');
+      } catch { lastErr = ''; }
+      // Update the status line every ~45 failures (~3s at 15fps) so the
+      // text isn't a strobe but still proves liveness.
+      if (!firing && frameTick % 45 === 0) {
+        setMsg(`Scanning… ${frameTick} frames seen — aim at a barcode`);
+      }
+    }
+
+    // Surface the actual negotiated MediaStreamTrack settings. If the
+    // browser couldn't honour our 1080p request and downgraded to 480p,
+    // the barcode bars become too thin to decode at typical phone
+    // distance. Showing the user the real resolution makes that
+    // failure mode debuggable instead of mysterious.
+    async function reportCameraState() {
+      try {
+        const video = overlay.querySelector('video');
+        const track = video?.srcObject?.getVideoTracks?.()[0];
+        const s = track?.getSettings?.() || {};
+        const w = s.width || 0, h = s.height || 0;
+        const fps = s.frameRate ? Math.round(s.frameRate) : 0;
+        if (w && h && w < 1280) {
+          setMsg(`Aim a barcode. Camera negotiated ${w}×${h}@${fps}fps (low res — try moving closer).`);
+        } else if (w && h) {
+          setMsg(`Aim a barcode. Hold ~15cm away. (${w}×${h}@${fps}fps)`);
+        } else {
+          setMsg('Aim a comic\'s barcode at the camera.');
+        }
+      } catch { /* getSettings is best-effort */ }
     }
 
     function onDecoded(text) {
