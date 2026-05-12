@@ -246,6 +246,148 @@ async def series_refresh(
     return Response(status_code=204, headers={"HX-Refresh": "true"})
 
 
+@router.post("/series/{series_id}/auto-link")
+async def series_auto_link(
+    series_id: int,
+    session: SessionDep,
+) -> Response:
+    """One-click "figure out the source and pull issues" for legacy
+    series rows that pre-date the save-time auto-enrichment in
+    /add/save.
+
+    Strategy, in order:
+      1. If the Series already has source + source_id, just re-run the
+         refresh logic against it.
+      2. Otherwise look at the comics in this series. The most common
+         (source, source_id) tuple on those comics tells us where the
+         data came from. For Wookieepedia we use the series NAME as the
+         series-article title; for CV/Metron we'd need to refetch the
+         issue to get the volume/series id, which we do lazily.
+
+    Returns 204 + HX-Refresh on success, 422 with an HTMX-banner-able
+    body when we can't figure out a source. The UI's existing manual
+    form is still available as the fallback.
+    """
+    series = await session.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="series not found")
+
+    # Step 1: if we already have a source, use it.
+    src = (series.source or "").strip()
+    sid = (series.source_id or "").strip()
+
+    # Step 2: otherwise sniff the children.
+    if not src:
+        # Vote by frequency. Most series have a single dominant source,
+        # but mixed-source series can happen after CSV imports — pick
+        # the one with the most comics behind it.
+        rows = (await session.exec(
+            select(Comic.source, func.count(Comic.id))
+            .where(Comic.series_id == series_id, Comic.source.is_not(None))
+            .group_by(Comic.source)
+            .order_by(func.count(Comic.id).desc())
+        )).all()
+        if rows:
+            top = rows[0]
+            src = (top[0] or "").strip() if isinstance(top, tuple) else (top.source or "").strip()
+
+    if not src:
+        raise HTTPException(
+            status_code=422,
+            detail="Couldn't auto-detect a source for this series — "
+                   "none of its comics carry a source. Use the manual "
+                   "form to specify one.",
+        )
+
+    # Derive a series-level source_id when one wasn't stored.
+    if not sid:
+        if src == "wookieepedia":
+            # On Wookieepedia the series-article title is usually just
+            # the series name. `get_series_issues` parses the Issues
+            # section; if the wiki uses a disambiguated title we'll get
+            # back an empty list and surface a 502.
+            sid = series.name
+        elif src == "comicvine":
+            # Refetch one child comic's issue payload to read the
+            # volume id off it. We pick any comic with a source_id
+            # set; the volume should be the same across the series.
+            child = (await session.exec(
+                select(Comic)
+                .where(
+                    Comic.series_id == series_id,
+                    Comic.source == "comicvine",
+                    Comic.source_id.is_not(None),
+                )
+                .limit(1)
+            )).first()
+            if child and child.source_id:
+                try:
+                    cand = await comicvine.get_issue(child.source_id)
+                except Exception:
+                    cand = None
+                if cand and cand.raw:
+                    vol = (cand.raw.get("volume") or {}).get("id")
+                    if vol is not None:
+                        sid = str(vol)
+        elif src == "metron":
+            child = (await session.exec(
+                select(Comic)
+                .where(
+                    Comic.series_id == series_id,
+                    Comic.source == "metron",
+                    Comic.source_id.is_not(None),
+                )
+                .limit(1)
+            )).first()
+            if child and child.source_id:
+                try:
+                    cand = await metron.get_issue(child.source_id)
+                except Exception:
+                    cand = None
+                if cand and cand.raw:
+                    ser = cand.raw.get("series") or {}
+                    s_id = ser.get("id")
+                    if s_id is not None:
+                        sid = str(s_id)
+
+    if not sid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Couldn't derive a {src} series ID automatically. "
+                   "Use the manual form to specify one.",
+        )
+
+    # Now run the same code as /series/{id}/refresh, but with the
+    # values we just figured out.
+    fetcher = _FETCHERS.get(src)
+    if fetcher is None:
+        raise HTTPException(status_code=400, detail=f"unsupported source {src!r}")
+
+    try:
+        issues = await fetcher(sid)
+    except UpstreamRateLimit as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{exc.source} is rate-limited ({exc.detail}) — try again later",
+        ) from exc
+
+    if not issues:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No issues found at {src} for {sid!r}. The wiki "
+                   "article might use a different title — try the "
+                   "manual form.",
+        )
+
+    series.source = src
+    series.source_id = sid
+    series.expected_issues = "\n".join(issues)
+    session.add(series)
+    await session.commit()
+
+    return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+
 @router.post("/series/{series_id}/merge")
 async def series_merge(
     series_id: int,
