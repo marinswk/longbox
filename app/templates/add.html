@@ -185,22 +185,42 @@
       showOverlay();
       setMsg('Starting camera…');
 
-      qr = new Html5Qrcode(elementId);
+      qr = new Html5Qrcode(elementId, {
+        // Use the browser's native BarcodeDetector when present (Chrome /
+        // Edge / Samsung Internet on Android have shipped it since 2020).
+        // Falls back to the pure-JS decoder otherwise. Native is
+        // dramatically faster + more reliable on real-world barcodes.
+        // The old `formatsToSupport: [enum.EAN_13, …]` restriction was
+        // removed because (a) the named enum isn't always on `window` at
+        // config-construction time, (b) native BarcodeDetector doesn't
+        // honor it anyway — the small perf win from filtering JS formats
+        // isn't worth the brittleness.
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      });
+
       const config = {
-        fps: 12,
+        fps: 15,
+        // Wide-and-short detection zone matches what the corner brackets
+        // suggest visually. Sized generously so the user doesn't need
+        // pixel-perfect aim.
         qrbox: (vw, vh) => {
-          // Wide-and-short box favours linear barcodes over square QR codes.
-          const w = Math.min(vw - 40, 360);
-          const h = Math.min(vh - 60, 140);
-          return { width: w, height: h };
+          const w = Math.min(vw * 0.85, 420);
+          const h = Math.min(vh * 0.45, 200);
+          return { width: Math.floor(w), height: Math.floor(h) };
         },
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.EAN_13,
-          Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.UPC_A,
-          Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.QR_CODE,
-        ],
+        aspectRatio: 4 / 3,
+        // Request a higher-resolution feed so small barcode print is
+        // legible. The browser will negotiate down on devices that
+        // can't deliver. Without this the default is often 640×480
+        // which is too low for an ISBN at arm's length.
+        videoConstraints: {
+          facingMode: { ideal: 'environment' },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 },
+          // `focusMode: continuous` keeps autofocus active so the
+          // barcode stays sharp as the user adjusts distance.
+          advanced: [{ focusMode: 'continuous' }],
+        },
       };
       try {
         await qr.start(
@@ -209,7 +229,7 @@
           onDecoded,
           () => {} // per-frame failures: ignore
         );
-        setMsg('Aim at a barcode…');
+        setMsg('Aim at a barcode — hold steady, ~10 cm away.');
         // Expose the torch toggle if the active track supports it.
         await maybeShowTorch();
       } catch (err) {

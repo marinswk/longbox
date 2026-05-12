@@ -55,8 +55,28 @@ def test_scanner_js_state_machine_hooks_wired():
         assert "navigator.vibrate" in body
         assert "applyConstraints" in body          # torch
         assert "getCapabilities" in body           # torch feature detection
-        assert "facingMode: 'environment'" in body # rear-camera preference
+        assert "facingMode" in body                # rear-camera preference
         assert 'key === \'Escape\'' in body or "key === 'Escape'" in body
+
+
+def test_scanner_uses_native_barcode_detector_when_supported():
+    """Performance + reliability win for Android Chromium. Without this
+    the library falls back to its pure-JS decoder which struggles with
+    real-world ISBN barcodes at typical phone-camera resolutions."""
+    with _client() as client:
+        body = client.get("/add").text
+        assert "useBarCodeDetectorIfSupported" in body
+
+
+def test_scanner_requests_high_resolution_video():
+    """Default browser camera resolution (often 640×480) makes the small
+    print on an ISBN barcode hard to decode at arm's length. We ask for
+    1080p; the browser negotiates down on devices that can't deliver."""
+    with _client() as client:
+        body = client.get("/add").text
+        assert "videoConstraints" in body
+        assert "1920" in body
+        assert "1080" in body
 
 
 def test_scanner_loads_html5_qrcode_library():
