@@ -1,0 +1,111 @@
+{% extends "_base.html" %}
+{% block title %}Configure import — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">CONFIGURE</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Step 3 of 5 — pick which metadata sources to query and tweak the
+  per-row search knobs. Smart defaults are based on your CSV's content.
+</p>
+<p class="mt-1 text-xs text-gray-500">
+  {{ total_rows }} row{{ '' if total_rows == 1 else 's' }} ready to resolve.
+</p>
+
+<form method="post" action="/admin/import/csv/{{ session.token }}/config" class="mt-6 space-y-6">
+
+  <section>
+    <h3 class="font-display text-2xl tracking-wide">SOURCES</h3>
+    <p class="mt-1 text-xs text-gray-600">
+      For each row we'll query every selected source in parallel and
+      surface the hits in the next step. ISBN/UPC matches are tried first,
+      then a series+title text search.
+    </p>
+    <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {% for tile in tiles %}
+        {# Wrap the whole tile in a label so the click area is generous. #}
+        {% set disabled = not tile.configured %}
+        <label class="relative block panel cursor-pointer rounded-2xl border-4 border-black p-4 transition
+                      {% if tile.default_on and not disabled %}bg-crawl/20{% else %}bg-paper-warm/30{% endif %}
+                      {% if disabled %}cursor-not-allowed opacity-60{% else %}hover:-translate-y-0.5{% endif %}">
+          <input type="checkbox" name="source[{{ tile.key }}]" value="on"
+                 {% if tile.default_on and not disabled %}checked{% endif %}
+                 {% if disabled %}disabled{% endif %}
+                 class="absolute right-3 top-3 h-5 w-5 cursor-pointer accent-black" />
+          <h4 class="font-display text-xl tracking-wide">{{ tile.name }}</h4>
+          <p class="mt-1 text-xs text-gray-700">{{ tile.tagline }}</p>
+          <p class="mt-2 text-[11px] text-gray-600">
+            {% if disabled %}
+              <span class="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-800">not configured</span>
+            {% endif %}
+            {{ tile.status }}
+          </p>
+        </label>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel rounded-3xl p-6">
+    <h3 class="font-display text-2xl tracking-wide">SEARCH KNOBS</h3>
+
+    <div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <label class="block">
+        <span class="text-xs font-semibold uppercase">Year tolerance</span>
+        <input type="range" name="year_tolerance" min="0" max="10" step="1"
+               value="{{ config.year_tolerance }}"
+               oninput="document.getElementById('lb-year-out').textContent = '±' + this.value + ' year' + (this.value === '1' ? '' : 's')"
+               class="mt-2 w-full accent-black" />
+        <span id="lb-year-out" class="mt-1 inline-block font-mono text-xs text-gray-700">
+          ±{{ config.year_tolerance }} year{{ '' if config.year_tolerance == 1 else 's' }}
+        </span>
+        <span class="mt-1 block text-[11px] text-gray-600">
+          Trades often release years after the original issues; loosening this
+          helps the matcher.
+        </span>
+      </label>
+
+      <div class="space-y-2">
+        <label class="flex cursor-pointer items-start gap-2">
+          <input type="checkbox" name="auto_tag_fandom" value="on"
+                 {% if config.auto_tag_fandom %}checked{% endif %}
+                 class="mt-1 h-4 w-4 cursor-pointer accent-black" />
+          <span class="text-xs">
+            <span class="block font-semibold uppercase">Auto-tag from Fandom column</span>
+            <span class="text-gray-600">
+              Sets <code>comic.fandom</code> from your CSV's mapped Fandom column
+              (lowercased). Recommended.
+            </span>
+          </span>
+        </label>
+        <label class="flex cursor-pointer items-start gap-2">
+          <input type="checkbox" name="auto_tag_publisher" value="on"
+                 {% if config.auto_tag_publisher %}checked{% endif %}
+                 class="mt-1 h-4 w-4 cursor-pointer accent-black" />
+          <span class="text-xs">
+            <span class="block font-semibold uppercase">Auto-tag from Publisher</span>
+            <span class="text-gray-600">
+              Adds the publisher name as a free-form tag. Off by default —
+              tends to be too coarse to be useful.
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <div class="flex flex-wrap gap-3">
+    <button type="submit"
+            class="rounded-lg border-4 border-black bg-crawl px-6 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      Save &amp; resolve rows →
+    </button>
+    <a href="/admin/import/csv/{{ session.token }}/map"
+       class="rounded-lg border-2 border-black bg-white px-4 py-2 text-sm font-semibold shadow-[2px_2px_0_0_#000]">
+      ← Back to mapping
+    </a>
+  </div>
+</form>
+
+{% endblock %}

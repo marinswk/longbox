@@ -1,0 +1,119 @@
+{% extends "_base.html" %}
+{% block title %}Map columns — Longbox import{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">MAP COLUMNS</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Step 2 of 5 — match each of your CSV's columns to a Longbox field.
+  We auto-suggest based on column names; tweak anything that's wrong.
+  Anything left as "— don't import —" is just ignored.
+</p>
+<p class="mt-1 text-xs text-gray-500">
+  {{ total_rows }} row{{ '' if total_rows == 1 else 's' }} parsed from
+  <span class="font-mono">{{ session.filename or '(unnamed file)' }}</span>.
+</p>
+
+<form method="post" action="/admin/import/csv/{{ session.token }}/map" class="mt-6 space-y-4">
+  <section class="panel rounded-3xl p-6">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {% for tf in our_fields %}
+        <label class="block">
+          <span class="text-xs font-semibold uppercase">{{ tf.label }}</span>
+          <select name="map[{{ tf.key }}]"
+                  data-our-key="{{ tf.key }}"
+                  class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl">
+            <option value="">— don't import —</option>
+            {% for h in headers %}
+              <option value="{{ h }}" {% if current_map.get(tf.key) == h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+          {% if tf.hint %}
+            <span class="mt-1 block text-[11px] text-gray-600">{{ tf.hint }}</span>
+          {% endif %}
+        </label>
+      {% endfor %}
+    </div>
+
+    <div class="mt-6 flex flex-wrap gap-3">
+      <button type="submit"
+              class="rounded-lg border-4 border-black bg-crawl px-6 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+        Save mapping &amp; continue →
+      </button>
+      <a href="/admin/import/csv"
+         class="rounded-lg border-2 border-black bg-white px-4 py-2 text-sm font-semibold shadow-[2px_2px_0_0_#000]">
+        Start over (new upload)
+      </a>
+    </div>
+  </section>
+</form>
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <div class="flex items-baseline justify-between">
+    <h3 class="font-display text-xl tracking-wide">PREVIEW</h3>
+    <p class="text-xs text-gray-500">first {{ samples | length }} row{{ '' if samples|length == 1 else 's' }} mapped to your selection</p>
+  </div>
+  <div id="preview-host" class="mt-3 overflow-x-auto"></div>
+  <p class="mt-2 text-[11px] text-gray-500">
+    Updates live as you change the dropdowns. Empty cells mean the chosen
+    column is blank for that row in your CSV.
+  </p>
+</section>
+
+<script id="lb-import-samples" type="application/json">{{ samples | tojson }}</script>
+<script id="lb-import-our-fields" type="application/json">
+{{ our_fields | map(attribute='key') | list | tojson }}
+</script>
+<script id="lb-import-our-labels" type="application/json">
+{{ our_fields | map(attribute='label') | list | tojson }}
+</script>
+
+<script>
+  (function () {
+    const samples = JSON.parse(document.getElementById('lb-import-samples').textContent);
+    const keys = JSON.parse(document.getElementById('lb-import-our-fields').textContent);
+    const labels = JSON.parse(document.getElementById('lb-import-our-labels').textContent);
+    const host = document.getElementById('preview-host');
+
+    function currentMap() {
+      const m = {};
+      document.querySelectorAll('select[data-our-key]').forEach((el) => {
+        if (el.value) m[el.dataset.ourKey] = el.value;
+      });
+      return m;
+    }
+
+    function escape(s) {
+      return String(s == null ? '' : s)
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    function render() {
+      const m = currentMap();
+      const visibleKeys = keys.filter((k) => m[k]);  // only mapped fields
+      if (!visibleKeys.length) {
+        host.innerHTML = '<p class="text-sm text-gray-500">Nothing mapped yet — pick at least one field above.</p>';
+        return;
+      }
+      const visibleLabels = visibleKeys.map((k) => labels[keys.indexOf(k)]);
+      const rows = samples.map((row) => {
+        const cells = visibleKeys.map((k) => `<td class="border-b border-gray-200 px-2 py-1 align-top">${escape(row[m[k]] || '')}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+      host.innerHTML =
+        '<table class="min-w-full text-xs"><thead><tr class="border-b-2 border-black text-left text-[11px] font-semibold uppercase">' +
+        visibleLabels.map((l) => `<th class="px-2 py-1">${escape(l)}</th>`).join('') +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    document.querySelectorAll('select[data-our-key]').forEach((el) => {
+      el.addEventListener('change', render);
+    });
+    render();
+  })();
+</script>
+
+{% endblock %}

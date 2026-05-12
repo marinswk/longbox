@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+data/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code local settings (per-machine; not portable)
+.claude/settings.local.json

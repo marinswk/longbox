@@ -1,0 +1,33 @@
+{% extends "_base.html" %}
+{% block title %}Import CSV — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">IMPORT FROM CSV</h2>
+
+{% if session %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <p class="text-sm">
+    <strong>Step "{{ step }}" is on its way</strong> — your upload is parked.
+  </p>
+  <dl class="mt-4 grid grid-cols-2 gap-2 text-sm">
+    <dt class="font-semibold">Token</dt><dd class="font-mono text-xs">{{ session.token }}</dd>
+    <dt class="font-semibold">Filename</dt><dd>{{ session.filename or '—' }}</dd>
+    <dt class="font-semibold">Rows parsed</dt><dd>{{ row_count }}</dd>
+    <dt class="font-semibold">State</dt><dd>{{ session.state }}</dd>
+    <dt class="font-semibold">Created</dt><dd>{{ session.created_at }}</dd>
+  </dl>
+  <p class="mt-4 text-xs text-gray-600">
+    Bookmark this URL to come back when the next wizard step lands.
+  </p>
+</section>
+{% else %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <p class="text-sm">No import session for that token. <a class="text-crawl-dark hover:underline" href="/import/csv">Start a new one →</a></p>
+</section>
+{% endif %}
+
+{% endblock %}

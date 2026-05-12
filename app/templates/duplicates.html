@@ -1,0 +1,60 @@
+{% extends "_base.html" %}
+{% block title %}Duplicates — Longbox{% endblock %}
+{% block content %}
+
+<section class="panel rounded-3xl p-6">
+  <h2 class="font-display text-3xl tracking-wide">DUPLICATES</h2>
+  <p class="mt-2 text-sm text-gray-700">
+    Comics where you own more than one physical copy. Useful for trade /
+    sale planning, or spotting accidental double-saves.
+  </p>
+  {% if items %}
+  <p class="mt-3 text-xs text-gray-600">
+    <strong>{{ total_dup_comics }}</strong> comic{{ '' if total_dup_comics == 1 else 's' }} with extras
+    — <strong>{{ total_extra_copies }}</strong> spare cop{{ 'y' if total_extra_copies == 1 else 'ies' }} in total.
+  </p>
+  {% endif %}
+</section>
+
+{% if items %}
+<section class="mt-6">
+  <ul class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+    {% for it in items %}
+    {% set comic = it.comic %}
+    {% set cover = comic.cover_url_local or comic.cover_url_remote %}
+    <li>
+      <a href="/comic/{{ comic.id }}" class="block panel relative rounded-2xl p-3 transition hover:-translate-y-0.5">
+        <span class="absolute right-2 top-2 z-10 rounded-full border-2 border-black bg-crawl px-2.5 py-0.5 text-xs font-bold text-black shadow-[2px_2px_0_0_#000]">
+          ×{{ it.copies }}
+        </span>
+        <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+          {% if cover %}
+            <img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />
+          {% endif %}
+        </div>
+        <p class="mt-2 truncate text-sm font-semibold"
+           title="{{ comic.title or (it.series.name if it.series else '(untitled)') }}">
+          {{ comic.title or it.series.name if it.series else '(untitled)' }}
+        </p>
+        <p class="truncate text-xs text-gray-600">
+          {% if it.series %}{{ it.series.name }}{% endif %}
+          {% if comic.issue_number %} #{{ comic.issue_number }}{% endif %}
+        </p>
+        <p class="mt-1 truncate text-[11px] text-gray-500">
+          {% if it.publisher %}{{ it.publisher.name }}{% endif %}
+        </p>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<section class="panel mt-6 rounded-3xl p-10 text-center">
+  <p class="font-display text-2xl tracking-wide">NO DUPLICATES</p>
+  <p class="mt-2 text-sm text-gray-600">
+    Every comic in your collection has exactly one copy. Tidy.
+  </p>
+</section>
+{% endif %}
+
+{% endblock %}

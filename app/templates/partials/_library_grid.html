@@ -1,0 +1,105 @@
+{% if total == 0 %}
+  <div class="panel rounded-3xl p-10 text-center">
+    <p class="font-display text-2xl tracking-wide">EMPTY LONGBOX</p>
+    <p class="mt-2 text-sm text-gray-600">No comics match these filters.</p>
+    <a href="/add"
+       class="mt-4 inline-block rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+      Add a comic →
+    </a>
+  </div>
+{% else %}
+  {% for group in groups %}
+    {% if group.label is not none %}
+      <h3 class="mt-6 mb-3 font-display text-xl tracking-wide text-crawl-dark">{{ group.label }}</h3>
+    {% endif %}
+    <ul class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {% for it in group['items'] %}
+      {% set comic = it.comic %}
+      {% set cover = comic.cover_url_local or comic.cover_url_remote %}
+      <li class="relative h-full">
+        <label class="lb-bulk-pill absolute right-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border-2 border-black bg-white/70 backdrop-blur-sm transition hover:bg-crawl/95"
+               title="Select for bulk edit"
+               onclick="event.stopPropagation()">
+          <input type="checkbox" class="lb-bulk-check h-3.5 w-3.5 cursor-pointer accent-black"
+                 value="{{ comic.id }}"
+                 onchange="window.lbBulk && lbBulk.update()" />
+        </label>
+        <a href="/comic/{{ comic.id }}"
+           class="flex h-full flex-col panel rounded-2xl p-3 transition hover:-translate-y-0.5">
+          <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+            {% if cover %}
+              <img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />
+            {% endif %}
+          </div>
+          <p class="mt-2 truncate text-sm font-semibold"
+             title="{{ comic.title or (it.series.name if it.series else '(untitled)') }}">
+            {{ comic.title or it.series.name if it.series else '(untitled)' }}
+          </p>
+          <p class="truncate text-xs text-gray-600">
+            {% if it.series %}{{ it.series.name }}{% endif %}
+            {% if comic.issue_number %} #{{ comic.issue_number }}{% endif %}
+          </p>
+          {# Footer pinned to the bottom so every card has the same height. #}
+          <div class="mt-auto pt-1.5">
+            <div class="flex items-center justify-between gap-2 text-[11px] text-gray-500">
+              <span class="min-w-0 flex-1 truncate">{% if it.publisher %}{{ it.publisher.name }}{% endif %}</span>
+              <span class="shrink-0">{{ it.copies }}×</span>
+            </div>
+            {# Always reserve a fixed-height info slot so cards don't jump
+               in height between series-with-progress, no-progress, or no-UPC.
+               Series progress wins; UPC is the fallback. #}
+            <div class="mt-1.5 h-[1.85rem]">
+              {% if it.progress %}
+                <div title="Owned {{ it.progress.owned }} of {{ it.progress.total }} in {{ it.series.name }}">
+                  <div class="h-1 w-full overflow-hidden rounded-full border border-black bg-white">
+                    <div class="h-full bg-crawl" style="width: {{ it.progress.pct }}%"></div>
+                  </div>
+                  <p class="mt-0.5 truncate text-[10px] text-gray-500">
+                    {{ it.progress.owned }} / {{ it.progress.total }}{% if it.progress.is_complete %} <span class="font-semibold text-crawl-dark">✓</span>{% endif %}
+                  </p>
+                </div>
+              {% elif comic.upc %}
+                <p class="mt-1 truncate font-mono text-[10px] text-gray-500" title="UPC {{ comic.upc }}">
+                  UPC {{ comic.upc }}
+                </p>
+              {% endif %}
+            </div>
+          </div>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+
+  {% if page_count > 1 %}
+  <nav class="mt-8 flex items-center justify-center gap-2 text-sm">
+    {% set base = '/library/grid' %}
+    {% set qs = [] %}
+    {% for p in selected.publishers %}{% set _ = qs.append('publisher=' ~ p|urlencode) %}{% endfor %}
+    {% for s in selected.series %}{% set _ = qs.append('series=' ~ s|urlencode) %}{% endfor %}
+    {% for y in selected.years %}{% set _ = qs.append('year=' ~ y) %}{% endfor %}
+    {% for t in selected.tags %}{% set _ = qs.append('tag=' ~ t|urlencode) %}{% endfor %}
+    {% for f in selected.formats %}{% set _ = qs.append('format=' ~ f|urlencode) %}{% endfor %}
+    {% for c in selected.canons %}{% set _ = qs.append('canon=' ~ c|urlencode) %}{% endfor %}
+    {% for e in selected.eras %}{% set _ = qs.append('era=' ~ e|urlencode) %}{% endfor %}
+    {% for a in selected.arcs %}{% set _ = qs.append('arc=' ~ a|urlencode) %}{% endfor %}
+    {% for f in selected.fandoms %}{% set _ = qs.append('fandom=' ~ f|urlencode) %}{% endfor %}
+    {% if selected.q %}{% set _ = qs.append('q=' ~ selected.q|urlencode) %}{% endif %}
+    {% if selected.group %}{% set _ = qs.append('group=' ~ selected.group) %}{% endif %}
+
+    {% if page > 1 %}
+      <button type="button"
+        hx-get="{{ base }}?{{ qs|join('&') }}&page={{ page - 1 }}"
+        hx-target="#library-grid" hx-swap="innerHTML"
+        class="rounded-lg border-2 border-black bg-white px-3 py-1 hover:-translate-y-0.5 shadow-[2px_2px_0_0_#000]">‹ Prev</button>
+    {% endif %}
+    <span class="px-2 text-gray-600">Page {{ page }} of {{ page_count }}</span>
+    {% if page < page_count %}
+      <button type="button"
+        hx-get="{{ base }}?{{ qs|join('&') }}&page={{ page + 1 }}"
+        hx-target="#library-grid" hx-swap="innerHTML"
+        class="rounded-lg border-2 border-black bg-white px-3 py-1 hover:-translate-y-0.5 shadow-[2px_2px_0_0_#000]">Next ›</button>
+    {% endif %}
+  </nav>
+  {% endif %}
+{% endif %}

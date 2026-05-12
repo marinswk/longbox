@@ -1,0 +1,69 @@
+{% extends "_base.html" %}
+{% block title %}Re-pick source — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/comic/{{ comic.id }}" class="text-crawl-dark hover:underline">← Back to comic</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">RE-PICK SOURCE MATCH</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Replace this comic's upstream link. The new candidate's title, cover,
+  description, format, etc. will overwrite the current source-derived
+  fields. Manual fields you've edited (notes, tags, copies) are kept.
+</p>
+
+<section class="panel mt-4 rounded-2xl p-4">
+  <p class="text-xs font-semibold uppercase text-gray-600">Currently linked</p>
+  <p class="mt-1 text-sm">
+    <span class="font-display text-xl tracking-wide">{{ comic.title or '(untitled)' }}</span>
+    {% if comic.issue_number %}<span class="text-gray-600"> #{{ comic.issue_number }}</span>{% endif %}
+  </p>
+  <p class="mt-0.5 text-xs text-gray-700">
+    {% if series %}Series · <a href="/series/{{ series.id }}" class="text-crawl-dark hover:underline">{{ series.name }}</a>{% endif %}
+    {% if comic.source %} · {{ comic.source }}{% if comic.source_id %} · <span class="font-mono">{{ comic.source_id }}</span>{% endif %}{% endif %}
+    {% if comic.format %} · {{ comic.format | title }}{% endif %}
+  </p>
+</section>
+
+<form hx-post="/comic/{{ comic.id }}/repick/search"
+      hx-target="#repick-candidates" hx-swap="innerHTML"
+      class="panel mt-4 rounded-2xl p-4 space-y-3">
+  <label class="block">
+    <span class="text-xs font-semibold uppercase">Search query</span>
+    <input type="text" name="q" value="{{ seeded_q }}" maxlength="160"
+           placeholder="series + title — try the exact wiki article name"
+           class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+  </label>
+
+  <div>
+    <p class="text-xs font-semibold uppercase">Sources</p>
+    <div class="mt-1 flex flex-wrap gap-2 text-xs">
+      {% for tile in tiles %}
+        <label class="flex cursor-pointer items-center gap-1 rounded-full border-2 border-black px-2 py-0.5
+                      {% if tile.key in selected_sources and tile.configured %}bg-crawl/30{% else %}bg-white{% endif %}
+                      {% if not tile.configured %}opacity-50 cursor-not-allowed{% endif %}">
+          <input type="checkbox" name="source[{{ tile.key }}]" value="on"
+                 {% if tile.key in selected_sources and tile.configured %}checked{% endif %}
+                 {% if not tile.configured %}disabled{% endif %}
+                 class="accent-black" />
+          {{ tile.name }}
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <button type="submit"
+          class="rounded-lg border-4 border-black bg-crawl px-4 py-1.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000]">
+    🔎 search
+  </button>
+</form>
+
+<section class="mt-4">
+  <h3 class="font-display text-xl tracking-wide">CANDIDATES</h3>
+  <div id="repick-candidates" class="mt-2">
+    {% include "partials/_repick_candidates.html" %}
+  </div>
+</section>
+
+{% endblock %}

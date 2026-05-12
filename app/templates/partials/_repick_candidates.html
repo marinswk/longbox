@@ -1,0 +1,57 @@
+{% if rate_limited %}
+<p class="mb-2 rounded-md border-2 border-black bg-yellow-100 px-2 py-1 text-[11px]">
+  ⚠ Rate-limited by: {{ rate_limited | join(', ') }}. Results may be partial.
+</p>
+{% endif %}
+
+{% if not candidates %}
+<div class="panel rounded-2xl p-6 text-center">
+  <p class="font-display text-xl tracking-wide">NO HITS</p>
+  <p class="mt-1 text-sm text-gray-600">
+    Tweak the query above and search again. The freeform box bypasses
+    the comic's stored fields, so try the exact wiki article title or a
+    different series name.
+  </p>
+</div>
+{% else %}
+<ul class="space-y-2">
+  {% for cand in candidates %}
+    {% set picked = (cand.source == comic.source and cand.source_id == comic.source_id) %}
+    <li>
+      <form method="post" action="/comic/{{ comic.id }}/repick/apply"
+            onsubmit="return confirm('Re-pick to {{ cand.title or cand.source_id }}? This will overwrite source-owned fields.')"
+            class="flex items-start gap-3 rounded-xl border-2 border-black p-2
+                   {% if picked %}bg-crawl/30{% else %}bg-white hover:bg-crawl-light/40{% endif %}">
+        <input type="hidden" name="source" value="{{ cand.source }}" />
+        <input type="hidden" name="source_id" value="{{ cand.source_id or '' }}" />
+        {% if cand.cover_url %}
+          <img src="{{ cand.cover_url }}" alt="" loading="lazy"
+               class="h-20 w-14 flex-none rounded border-2 border-black object-cover" />
+        {% else %}
+          <div class="h-20 w-14 flex-none rounded border-2 border-black bg-gray-100"></div>
+        {% endif %}
+        <div class="min-w-0 flex-1 text-xs">
+          <p class="truncate font-semibold">
+            {{ cand.title or '(untitled)' }}{% if cand.issue_number %} #{{ cand.issue_number }}{% endif %}
+            {% if picked %}<span class="ml-1 rounded-full bg-crawl px-2 py-0.5 text-[10px] font-bold text-black">currently linked</span>{% endif %}
+          </p>
+          <p class="truncate text-gray-700">
+            {{ cand.series or '—' }}{% if cand.publisher %} · {{ cand.publisher }}{% endif %}
+            {% if cand.cover_date %} · {{ cand.cover_date[:7] }}{% endif %}
+            {% if cand.format %} · {{ cand.format | title }}{% endif %}
+          </p>
+          <p class="truncate text-[11px] text-gray-500" title="{{ cand.source }}{% if cand.source_id %} · {{ cand.source_id }}{% endif %}">
+            {{ cand.source }}{% if cand.source_id %} · <span class="font-mono">{{ cand.source_id }}</span>{% endif %}
+          </p>
+        </div>
+        <button type="submit"
+                class="self-center rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]
+                       {% if picked %}opacity-50 cursor-not-allowed{% endif %}"
+                {% if picked %}disabled title="Already linked"{% endif %}>
+          {% if picked %}linked{% else %}pick &amp; apply{% endif %}
+        </button>
+      </form>
+    </li>
+  {% endfor %}
+</ul>
+{% endif %}

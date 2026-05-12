@@ -1,0 +1,192 @@
+{# One card per CSV row. The skeleton renders with status="pending" and a
+   `hx-trigger="revealed"` lazy-search; once results land it re-renders
+   with the same id so the swap is in-place. We OOB-swap the progress
+   block at the bottom of every response to keep counts current. #}
+{% set status = row.status %}
+{% set f = row.fields %}
+<article id="lb-row-{{ row.id }}"
+         class="panel rounded-2xl border-2 border-black p-4
+                {% if status == 'matched' %}bg-crawl/10{% elif status == 'as_is' %}bg-yellow-50{% elif status == 'not_found' %}bg-red-50{% elif status == 'skipped' %}bg-gray-100 opacity-75{% elif status == 'errored' %}bg-red-100{% endif %}"
+         {% if status == 'pending' %}
+         hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/search"
+         hx-trigger="revealed"
+         hx-swap="outerHTML"
+         {% endif %}>
+
+  <div class="flex flex-wrap items-baseline gap-2">
+    <p class="font-mono text-[11px] text-gray-500">#{{ row.row_index + 1 }}</p>
+
+    {# Status badge #}
+    <span class="rounded-full border-2 border-black px-2 py-0.5 text-[11px] font-semibold
+                 {% if status == 'matched' %}bg-crawl{% elif status == 'multi' %}bg-white{% elif status == 'as_is' %}bg-yellow-200{% elif status == 'not_found' %}bg-red-100 text-red-800{% elif status == 'skipped' %}bg-gray-200{% elif status == 'errored' %}bg-red-200 text-red-900{% else %}bg-paper-warm{% endif %}">
+      {% if status == 'pending' %}🔄 searching…
+      {% elif status == 'matched' %}✓ matched
+      {% elif status == 'multi' %}✓ pre-picked
+      {% elif status == 'as_is' %}✎ as-is
+      {% elif status == 'not_found' %}× not found
+      {% elif status == 'skipped' %}skipped
+      {% elif status == 'errored' %}! errored
+      {% endif %}
+    </span>
+
+    <p class="min-w-0 flex-1 truncate text-sm">
+      <strong class="text-gray-900">{{ f.title or '(untitled)' }}</strong>
+      {% if f.issue_number %}<span class="text-gray-600"> #{{ f.issue_number }}</span>{% endif %}
+      {% if f.series %}<span class="text-gray-600"> · {{ f.series }}</span>{% endif %}
+      {% if f.year %}<span class="text-gray-500"> ({{ f.year }})</span>{% endif %}
+    </p>
+  </div>
+
+  {% if f.publisher or f.format or f.fandom or f.isbn_13 or f.upc %}
+  <p class="mt-1 text-[11px] text-gray-600">
+    {% if f.publisher %}{{ f.publisher }}{% endif %}
+    {% if f.format %}{% if f.publisher %} · {% endif %}{{ f.format }}{% endif %}
+    {% if f.fandom %} · 🌌 {{ f.fandom | title }}{% endif %}
+    {% if f.isbn_13 %} · ISBN <span class="font-mono">{{ f.isbn_13 }}</span>{% endif %}
+    {% if f.upc %} · UPC <span class="font-mono">{{ f.upc }}</span>{% endif %}
+  </p>
+  {% endif %}
+
+  {# Soft warnings (e.g. partial rate-limit) — shown as a yellow chip when
+     the row isn't in the errored state but the search left a note. #}
+  {% if row.error and status != 'errored' %}
+  <p class="mt-2 rounded-md border-2 border-black bg-yellow-100 px-2 py-1 text-[11px]">
+    ⚠ {{ row.error }}
+  </p>
+  {% endif %}
+
+  {# ─────  Pending: spinner placeholder while HTMX fetches results  ───── #}
+  {% if status == 'pending' %}
+  <p class="mt-3 text-xs text-gray-500">queued…</p>
+
+  {# ─────  Matched / Multi: candidate picker (horizontal pager)  ───── #}
+  {% elif status in ('matched', 'multi') %}
+  {% include "partials/_import_row_search_box.html" %}
+  {% set candidates = row.candidates %}
+  {% set total = candidates | length %}
+  <div data-row-pager="lb-pager-{{ row.id }}"
+       data-page-size="4"
+       data-total="{{ total }}"
+       class="mt-3 space-y-2">
+    {% for cand in candidates %}
+      {% set picked = (cand.source == row.chosen_source and cand.source_id == row.chosen_source_id) %}
+      <form hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/pick"
+            hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+            data-cand-idx="{{ loop.index0 }}"
+            class="lb-cand flex items-start gap-3 rounded-xl border-2 border-black p-2
+                   {% if picked %}bg-crawl/30{% else %}bg-white hover:bg-crawl-light/40{% endif %}">
+        <input type="hidden" name="source" value="{{ cand.source }}" />
+        <input type="hidden" name="source_id" value="{{ cand.source_id or '' }}" />
+        {% if cand.cover_url %}
+          <img src="{{ cand.cover_url }}" alt="" loading="lazy"
+               class="h-16 w-12 flex-none rounded border-2 border-black object-cover" />
+        {% else %}
+          <div class="h-16 w-12 flex-none rounded border-2 border-black bg-gray-100"></div>
+        {% endif %}
+        <div class="min-w-0 flex-1 text-xs">
+          <p class="truncate font-semibold">{{ cand.title or '(untitled)' }}{% if cand.issue_number %} #{{ cand.issue_number }}{% endif %}</p>
+          <p class="truncate text-gray-600">{{ cand.series or '—' }}{% if cand.publisher %} · {{ cand.publisher }}{% endif %}{% if cand.cover_date %} · {{ cand.cover_date[:7] }}{% endif %}</p>
+          <p class="truncate text-[11px] text-gray-500" title="{{ cand.source }}{% if cand.source_id %} · {{ cand.source_id }}{% endif %}">{{ cand.source }}{% if cand.source_id %} · <span class="font-mono">{{ cand.source_id }}</span>{% endif %}</p>
+        </div>
+        <button type="submit"
+                class="self-center rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]
+                       {% if picked %}bg-crawl{% endif %}">
+          {% if picked %}✓ picked{% else %}pick{% endif %}
+        </button>
+      </form>
+    {% endfor %}
+  </div>
+  {% if total > 4 %}
+  <div class="mt-2 flex items-center gap-2 text-[11px]">
+    <button type="button" data-pager-prev="lb-pager-{{ row.id }}"
+            class="rounded border-2 border-black bg-white px-2 py-0.5 font-semibold shadow-[2px_2px_0_0_#000] disabled:opacity-50">‹ prev</button>
+    <span data-pager-label="lb-pager-{{ row.id }}" class="font-mono"></span>
+    <button type="button" data-pager-next="lb-pager-{{ row.id }}"
+            class="rounded border-2 border-black bg-white px-2 py-0.5 font-semibold shadow-[2px_2px_0_0_#000] disabled:opacity-50">next ›</button>
+    <span class="ml-auto text-gray-500">{{ total }} candidate{{ '' if total == 1 else 's' }}</span>
+  </div>
+  {% endif %}
+  <div class="mt-2 flex gap-2">
+    <button type="button"
+            hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/skip"
+            hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+            class="rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+      skip this row
+    </button>
+  </div>
+
+  {# ─────  Not found: search-again / as-is / skip  ───── #}
+  {% elif status == 'not_found' %}
+  <p class="mt-2 text-xs text-gray-700">
+    No hits across the configured sources. Try a freeform search below,
+    import the row as-is, or skip it.
+  </p>
+  {% include "partials/_import_row_search_box.html" %}
+  <div class="mt-2 flex flex-wrap gap-2">
+    <button type="button"
+            hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/search"
+            hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+            class="rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+      🔄 retry auto-search
+    </button>
+    <button type="button"
+            hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/as-is"
+            hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+            class="rounded border-2 border-black bg-yellow-200 px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+      ✎ import as-is
+    </button>
+    <button type="button"
+            hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/skip"
+            hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+            class="rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+      skip
+    </button>
+  </div>
+
+  {# ─────  As-is: confirmed, show undo  ───── #}
+  {% elif status == 'as_is' %}
+  <p class="mt-2 text-[11px] text-gray-700">
+    Will be saved with whatever fields were in your CSV. No upstream
+    creators / arcs / characters / cover.
+  </p>
+  <button type="button"
+          hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/search"
+          hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+          class="mt-2 rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+    undo · search again
+  </button>
+
+  {# ─────  Skipped: undo  ───── #}
+  {% elif status == 'skipped' %}
+  <button type="button"
+          hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/search"
+          hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+          class="mt-2 rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+    undo · search again
+  </button>
+
+  {# ─────  Errored: error msg + retry  ───── #}
+  {% elif status == 'errored' %}
+  <p class="mt-2 break-words text-[11px] text-red-900">
+    <strong>Error:</strong> {{ row.error or 'unknown' }}
+  </p>
+  <button type="button"
+          hx-post="/admin/import/csv/{{ session.token }}/rows/{{ row.id }}/search"
+          hx-target="#lb-row-{{ row.id }}" hx-swap="outerHTML"
+          class="mt-2 rounded border-2 border-black bg-white px-3 py-1 text-[11px] font-semibold shadow-[2px_2px_0_0_#000]">
+    🔄 retry
+  </button>
+  {% endif %}
+</article>
+
+{# OOB swap so any per-row update keeps the sticky footer's counts honest.
+   ONLY emit this when the partial is being rendered as part of an HTMX
+   swap response (`oob_progress` flag set). The initial page render
+   contains the full sticky footer once at the bottom — emitting an OOB
+   block per row would create N duplicates of the same id. #}
+{% if oob_progress %}
+<div id="lb-import-progress-inner" hx-swap-oob="true"
+     class="pointer-events-auto w-full max-w-4xl rounded-2xl border-4 border-black bg-paper p-4 shadow-[6px_6px_0_0_#000]">
+  {% include "partials/_import_progress.html" %}
+</div>
+{% endif %}

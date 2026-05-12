@@ -1,0 +1,117 @@
+{% extends "_base.html" %}
+{% block title %}Resolve rows — Longbox import{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<div class="mt-2 flex flex-wrap items-baseline justify-between gap-3">
+  <div>
+    <h2 class="font-display text-3xl tracking-wide">RESOLVE</h2>
+    <p class="mt-1 text-sm text-gray-600">
+      Step 4 of 5 — for each row we'll search the configured sources and
+      surface candidates. Pick the right hit, skip rows you don't want, or
+      flag not-found rows to import as-is with whatever the CSV had.
+    </p>
+  </div>
+  <a href="/admin/import/csv/{{ session.token }}/config"
+     class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000]">
+    ← Back to config
+  </a>
+</div>
+
+<section id="lb-import-rows" class="mt-6 space-y-3 pb-32">
+  {% for row in rows %}
+    {% include "partials/_import_row.html" with context %}
+  {% endfor %}
+</section>
+
+{# Per-card candidate pagination — show `pageSize` results at a time,
+   prev/next buttons drive a window over the candidate list. The same
+   logic re-runs after every HTMX swap (htmx:afterSwap) so freshly
+   re-rendered cards get their pager too. #}
+<script>
+  // "Search remaining" — the import button can't fire while rows are
+  // still in pending state. Each card has `hx-trigger="revealed"` so
+  // they don't all fire in parallel on page load. This helper triggers
+  // every still-pending card on demand, in small batches to be polite
+  // to the upstream sources. Exposed on `window` because the button
+  // lives in an OOB-swapped block that loses its event handlers on swap.
+  window.lbFlushPending = (function () {
+    const BATCH = 6;       // concurrent in-flight searches
+    const DELAY = 250;     // ms between batch starts
+    let running = false;
+    return async function () {
+      if (running) return;
+      running = true;
+      try {
+        const pending = Array.from(document.querySelectorAll(
+          'article[hx-trigger="revealed"]'
+        ));
+        for (let i = 0; i < pending.length; i += BATCH) {
+          pending.slice(i, i + BATCH).forEach((el) => {
+            // Once an element fires, htmx removes its trigger; another
+            // pass over the DOM after the swap will pick up anything new.
+            try { htmx.trigger(el, 'revealed'); } catch (_) {}
+          });
+          await new Promise((r) => setTimeout(r, DELAY));
+        }
+      } finally {
+        running = false;
+      }
+    };
+  })();
+
+  (function () {
+    function applyPager(host) {
+      const pageSize = parseInt(host.dataset.pageSize, 10) || 4;
+      const cands = host.querySelectorAll('.lb-cand');
+      if (!cands.length) return;
+      const id = host.dataset.rowPager;
+      // Find the page number for the picked candidate so the "✓ picked"
+      // option lands on the visible page when the card first renders.
+      let initial = 0;
+      cands.forEach((el, idx) => {
+        if (el.classList.contains('bg-crawl/30') || el.querySelector('button.bg-crawl')) {
+          initial = Math.floor(idx / pageSize);
+        }
+      });
+      let page = initial;
+      const totalPages = Math.max(1, Math.ceil(cands.length / pageSize));
+      function render() {
+        cands.forEach((el, idx) => {
+          const onPage = Math.floor(idx / pageSize) === page;
+          el.style.display = onPage ? '' : 'none';
+        });
+        const lbl = document.querySelector(`[data-pager-label="${id}"]`);
+        if (lbl) lbl.textContent = `${page + 1} / ${totalPages}`;
+        const prev = document.querySelector(`[data-pager-prev="${id}"]`);
+        const next = document.querySelector(`[data-pager-next="${id}"]`);
+        if (prev) prev.disabled = page === 0;
+        if (next) next.disabled = page >= totalPages - 1;
+      }
+      const prev = document.querySelector(`[data-pager-prev="${id}"]`);
+      const next = document.querySelector(`[data-pager-next="${id}"]`);
+      if (prev) prev.addEventListener('click', () => { if (page > 0) { page--; render(); } });
+      if (next) next.addEventListener('click', () => { if (page < totalPages - 1) { page++; render(); } });
+      render();
+    }
+    function initAll(root) {
+      (root || document).querySelectorAll('[data-row-pager]').forEach(applyPager);
+    }
+    initAll(document);
+    document.body.addEventListener('htmx:afterSwap', (e) => initAll(e.target));
+  })();
+</script>
+
+{# ─────────────────────  Sticky progress footer  ───────────────────── #}
+<div id="lb-import-progress"
+     class="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center p-4 pb-safe">
+  <div id="lb-import-progress-inner"
+       class="pointer-events-auto w-full max-w-4xl rounded-2xl border-4 border-black bg-paper p-4 shadow-[6px_6px_0_0_#000]">
+    {% include "partials/_import_progress.html" %}
+  </div>
+</div>
+
+{% endblock %}

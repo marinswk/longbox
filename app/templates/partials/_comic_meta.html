@@ -1,0 +1,104 @@
+{# Build a Wookieepedia article URL from an article title. Spaces become
+   underscores (canonical wiki form) and the rest is percent-encoded. #}
+{% macro wookiee_url(title) -%}
+https://starwars.fandom.com/wiki/{{ title.replace(' ', '_')|urlencode }}
+{%- endmacro %}
+{% set is_wookiee = comic.source == 'wookieepedia' and comic.source_id %}
+
+<div class="panel rounded-3xl p-6">
+  <div class="flex items-baseline justify-between gap-4">
+    <h2 class="min-w-0 flex-1 break-words font-display text-3xl tracking-wide">
+      {{ comic.title or '(untitled)' }}
+      {% if comic.issue_number %}<span class="text-gray-500">#{{ comic.issue_number }}</span>{% endif %}
+    </h2>
+    <div class="flex shrink-0 gap-2">
+      <button type="button"
+              hx-get="/comic/{{ comic.id }}/edit"
+              hx-target="#meta" hx-swap="innerHTML"
+              class="rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+        Edit
+      </button>
+      <a href="/comic/{{ comic.id }}/repick"
+         class="rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5"
+         title="Replace this comic's upstream link with a different candidate.">
+        🔁 Re-pick
+      </a>
+    </div>
+  </div>
+
+  {% if series %}
+    <p class="mt-1 text-sm text-gray-700">
+      <a href="/series/{{ series.id }}" class="font-semibold text-crawl-dark hover:underline">{{ series.name }}</a>
+      {% if publisher %} · {{ publisher.name }}{% endif %}
+    </p>
+  {% endif %}
+
+  {% if comic.fandom %}
+    <p class="mt-2">
+      <a href="/library?fandom={{ comic.fandom | urlencode }}"
+         class="inline-flex items-center gap-1 rounded-full border-2 border-black bg-crawl-light/40 px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:-translate-y-0.5"
+         title="Browse all comics in this fandom">
+        🌌 {{ comic.fandom | title }}
+      </a>
+    </p>
+  {% endif %}
+
+  <dl class="mt-4 grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+    {% if comic.variant %}<dt class="font-semibold">Variant</dt><dd>{{ comic.variant }}</dd>{% endif %}
+    {% if comic.format %}<dt class="font-semibold">Format</dt><dd>{{ comic.format }}</dd>{% endif %}
+    {% if comic.language %}<dt class="font-semibold">Language</dt><dd>{{ comic.language }}</dd>{% endif %}
+    {% if comic.cover_date %}<dt class="font-semibold">Cover date</dt><dd>{{ comic.cover_date }}</dd>{% endif %}
+    {% if comic.timeline %}<dt class="font-semibold">Timeline</dt><dd>{{ comic.timeline }}</dd>{% endif %}
+    {% if comic.era %}<dt class="font-semibold">Era</dt><dd>{{ comic.era }}</dd>{% endif %}
+    {% if comic.canon %}<dt class="font-semibold">Continuity</dt><dd class="capitalize">{{ comic.canon }}</dd>{% endif %}
+    {% if comic.page_count %}<dt class="font-semibold">Pages</dt><dd>{{ comic.page_count }}</dd>{% endif %}
+    {% if comic.isbn_13 %}<dt class="font-semibold">ISBN-13</dt><dd class="font-mono">{{ comic.isbn_13 }}</dd>{% endif %}
+    {% if comic.isbn_10 %}<dt class="font-semibold">ISBN-10</dt><dd class="font-mono">{{ comic.isbn_10 }}</dd>{% endif %}
+    {% if comic.upc %}<dt class="font-semibold">UPC</dt><dd class="font-mono">{{ comic.upc }}</dd>{% endif %}
+    {% if comic.comicvine_id %}<dt class="font-semibold">ComicVine</dt><dd class="font-mono">{{ comic.comicvine_id }}</dd>{% endif %}
+    {% if comic.metron_id %}<dt class="font-semibold">Metron</dt><dd class="font-mono">{{ comic.metron_id }}</dd>{% endif %}
+    {% if comic.cover_price_eur is not none %}<dt class="font-semibold">Cover price</dt><dd>€{{ '%.2f'|format(comic.cover_price_eur) }}</dd>{% endif %}
+  </dl>
+
+  {% if arcs %}
+    <div class="mt-4">
+      <p class="text-xs font-semibold uppercase tracking-wide text-gray-600">Story arcs</p>
+      <div class="mt-1 flex flex-wrap gap-1.5">
+        {% for arc in arcs %}
+          <span class="rounded-full border-2 border-black bg-white px-2.5 py-0.5 text-xs font-semibold">{{ arc }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if collected_entries %}
+    <div class="mt-4">
+      <p class="text-xs font-semibold uppercase tracking-wide text-gray-600">Collects</p>
+      <ul class="mt-1 list-inside list-disc text-sm text-gray-800">
+        {% for entry in collected_entries %}
+          <li>
+            {% if is_wookiee and entry.linkable %}
+              <a href="{{ wookiee_url(entry.text) }}" target="_blank" rel="noopener noreferrer"
+                 class="text-crawl-dark hover:underline">{{ entry.text }}</a>
+            {% else %}
+              {{ entry.text }}
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if comic.description %}
+    <p class="mt-4 whitespace-pre-line text-sm text-gray-800">{{ comic.description }}</p>
+  {% endif %}
+
+  {% if is_wookiee %}
+    <p class="mt-4 text-xs text-gray-600">
+      <a href="{{ wookiee_url(comic.source_id) }}" target="_blank" rel="noopener noreferrer"
+         class="font-semibold text-crawl-dark hover:underline">
+        ↗ View on Wookieepedia
+      </a>
+    </p>
+  {% endif %}
+</div>

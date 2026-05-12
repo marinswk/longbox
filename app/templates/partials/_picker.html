@@ -1,0 +1,143 @@
+<div class="panel rounded-3xl p-6">
+  {% if rate_limited %}
+    <div class="mb-4 rounded-lg border-2 border-black bg-crawl-light/50 p-3 text-xs">
+      <p class="font-semibold uppercase tracking-wide">⚠ Some sources rate-limited</p>
+      <p class="mt-1 text-gray-700">
+        {% for src in rate_limited %}<span class="font-mono">{{ src }}</span>{{ ", " if not loop.last }}{% endfor %}
+        — only cached results are shown for these. Try again in a few minutes for fresh data.
+      </p>
+    </div>
+  {% endif %}
+  {% if not candidates %}
+    {% if text_search %}
+      {% if q %}
+        <p class="text-lg">No matches for <code class="rounded bg-gray-100 px-2 py-1">{{ q }}</code>.</p>
+        <p class="mt-2 text-sm text-gray-600">
+          Tried Wookieepedia, ComicVine, and Metron — none of them have a
+          comic whose title or series matches that string. Try a different
+          spelling, or use the identifier scanner above instead.
+        </p>
+      {% else %}
+        <p class="text-lg">Type a title or series above to search.</p>
+      {% endif %}
+    {% else %}
+    <p class="text-lg">
+      No matches for <code class="rounded bg-gray-100 px-2 py-1">{{ identifier }}</code>.
+    </p>
+    <p class="mt-2 text-sm text-gray-600">
+      Tried Metron and Wookieepedia for UPCs / Open Library + Wookieepedia
+      for ISBNs / ComicVine + Metron for issue IDs — none of them have a
+      record matching this identifier. You can still fill in the metadata
+      yourself below and save the comic.
+    </p>
+    <form class="mt-4"
+          hx-post="/add/confirm"
+          hx-target="#flow"
+          hx-swap="innerHTML">
+      <input type="hidden" name="source" value="manual" />
+      {# Pre-fill the identifier slot the user typed: ISBN-13/10, or UPC. #}
+      {% set is_isbn_13 = identifier|length == 13 and identifier.isdigit() and identifier[:3] in ['978','979'] %}
+      {% set is_isbn_10 = identifier|length == 10 and identifier.isdigit() %}
+      {% set is_upc = identifier.isdigit() and not is_isbn_13 and not is_isbn_10 and (identifier|length == 12 or 13 <= identifier|length <= 18) %}
+      {% if is_isbn_13 %}
+        <input type="hidden" name="isbn_13" value="{{ identifier }}" />
+      {% elif is_isbn_10 %}
+        <input type="hidden" name="isbn_10" value="{{ identifier }}" />
+      {% elif is_upc %}
+        <input type="hidden" name="upc" value="{{ identifier }}" />
+      {% endif %}
+      <button type="submit"
+              class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+        Enter manually →
+      </button>
+    </form>
+    {% endif %}
+  {% else %}
+    <h3 class="font-display text-2xl tracking-wide">PICK ONE</h3>
+    <p class="mt-1 text-sm text-gray-600">
+      {% if text_search %}
+        {{ total }} result{{ '' if total == 1 else 's' }} for
+        <code class="rounded bg-gray-100 px-2 py-1">{{ q }}</code>
+        {% if total_pages > 1 %} — page {{ page }} of {{ total_pages }}{% endif %}.
+      {% else %}
+        {{ candidates|length }} match{{ '' if candidates|length == 1 else 'es' }} for
+        <code class="rounded bg-gray-100 px-2 py-1">{{ identifier }}</code>.
+      {% endif %}
+    </p>
+    <ul class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {% for c in candidates %}
+      <li class="panel rounded-2xl p-4">
+        <div class="flex gap-4">
+          {% if c.cover_url %}
+            <img src="{{ c.cover_url }}" alt="" class="h-32 w-24 flex-none rounded border-2 border-black object-cover" loading="lazy" />
+          {% else %}
+            <div class="h-32 w-24 flex-none rounded border-2 border-black bg-gray-100"></div>
+          {% endif %}
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-semibold uppercase tracking-wide text-crawl-dark">{{ c.source }}</p>
+            <p class="truncate font-semibold" title="{{ c.title or c.series or '(untitled)' }}">{{ c.title or c.series or '(untitled)' }}</p>
+            {% if c.series and c.title and c.series != c.title %}
+              <p class="truncate text-sm text-gray-700" title="{{ c.series }}">{{ c.series }}{% if c.issue_number %} #{{ c.issue_number }}{% endif %}</p>
+            {% elif c.issue_number %}
+              <p class="text-sm text-gray-700">#{{ c.issue_number }}</p>
+            {% endif %}
+            {% if c.publisher %}<p class="truncate text-xs text-gray-600">{{ c.publisher }}</p>{% endif %}
+            {% if c.cover_date %}<p class="text-xs text-gray-600">{{ c.cover_date }}</p>{% endif %}
+            {% if c.page_count %}<p class="text-xs text-gray-600">{{ c.page_count }} pages</p>{% endif %}
+          </div>
+        </div>
+        <form
+          class="mt-3"
+          hx-post="/add/confirm"
+          hx-target="#flow"
+          hx-swap="innerHTML"
+        >
+          <input type="hidden" name="source" value="{{ c.source or '' }}" />
+          <input type="hidden" name="source_id" value="{{ c.source_id or '' }}" />
+          <input type="hidden" name="title" value="{{ c.title or '' }}" />
+          <input type="hidden" name="series" value="{{ c.series or '' }}" />
+          <input type="hidden" name="issue_number" value="{{ c.issue_number or '' }}" />
+          <input type="hidden" name="publisher" value="{{ c.publisher or '' }}" />
+          <input type="hidden" name="cover_date" value="{{ c.cover_date or '' }}" />
+          <input type="hidden" name="description" value="{{ c.description or '' }}" />
+          <input type="hidden" name="page_count" value="{{ c.page_count or '' }}" />
+          <input type="hidden" name="isbn_10" value="{{ c.isbn_10 or '' }}" />
+          <input type="hidden" name="isbn_13" value="{{ c.isbn_13 or '' }}" />
+          <input type="hidden" name="upc" value="{{ c.upc or '' }}" />
+          <input type="hidden" name="comicvine_id" value="{% if c.source == 'comicvine' %}{{ c.source_id or '' }}{% endif %}" />
+          <input type="hidden" name="metron_id" value="{% if c.source == 'metron' %}{{ c.source_id or '' }}{% endif %}" />
+          <input type="hidden" name="cover_url_remote" value="{{ c.cover_url or '' }}" />
+          <button
+            type="submit"
+            class="w-full rounded-lg border-2 border-black bg-crawl px-4 py-2 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5"
+          >
+            Pick this one →
+          </button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if text_search and total_pages > 1 %}
+    <nav class="mt-8 flex items-center justify-center gap-2 text-sm">
+      {% if page > 1 %}
+        <button type="button"
+                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page - 1 }}"
+                hx-target="#flow" hx-swap="innerHTML"
+                class="rounded-lg border-2 border-black bg-white px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+          ‹ Prev
+        </button>
+      {% endif %}
+      <span class="px-2 text-gray-600">Page {{ page }} of {{ total_pages }}</span>
+      {% if page < total_pages %}
+        <button type="button"
+                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page + 1 }}"
+                hx-target="#flow" hx-swap="innerHTML"
+                class="rounded-lg border-2 border-black bg-white px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+          Next ›
+        </button>
+      {% endif %}
+    </nav>
+    {% endif %}
+  {% endif %}
+</div>

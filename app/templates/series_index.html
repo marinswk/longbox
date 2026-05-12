@@ -1,0 +1,161 @@
+{% extends "_base.html" %}
+{% block title %}Series — Longbox{% endblock %}
+{% block content %}
+<button type="button" id="lb-filters-fab"
+        onclick="lbFiltersToggle()"
+        aria-label="Open filters"
+        class="fixed bottom-4 right-4 z-30 inline-flex h-12 items-center gap-1 rounded-full border-4 border-black bg-crawl px-4 font-semibold text-black shadow-[4px_4px_0_0_#000] hover:-translate-y-0.5 lg:hidden">
+  🎛 Filters
+</button>
+<div id="lb-filters-backdrop" class="lb-filters-backdrop fixed inset-0 z-40 bg-black/60 lg:hidden"
+     onclick="lbFiltersToggle(false)" aria-hidden="true"></div>
+
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
+
+  <aside id="lb-filters-aside"
+         class="lb-filters-drawer panel fixed inset-x-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto rounded-t-3xl p-4 pb-safe
+                lg:static lg:max-h-[calc(100vh-2rem)] lg:rounded-3xl lg:sticky lg:top-4 lg:h-fit">
+    <style>
+      .lb-filter > summary { list-style: none; cursor: pointer;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.5rem 0.25rem; font-weight: 600; font-size: 0.7rem;
+        text-transform: uppercase; letter-spacing: 0.04em; }
+      .lb-filter > summary::-webkit-details-marker { display: none; }
+      .lb-filter > summary::after { content: "▾"; font-size: 0.7rem;
+        color: #4b5563; transition: transform 0.15s ease; }
+      .lb-filter:not([open]) > summary::after { transform: rotate(-90deg); }
+      .lb-filter[open] > summary { color: #a17900; }
+      .lb-facet-list { max-height: 12rem; overflow-y: auto;
+        padding-right: 0.25rem; margin: 0.25rem 0 0.5rem; }
+      .lb-facet-list label { display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.125rem 0.25rem; border-radius: 0.25rem; cursor: pointer;
+        font-size: 0.8rem; line-height: 1.2rem; }
+      .lb-facet-list label:hover { background: rgba(255, 232, 31, 0.18); }
+      .lb-facet-list .lb-facet-label { min-width: 0; flex: 1 1 auto;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lb-facet-list .lb-facet-count { flex: none; color: #6b7280;
+        font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+    </style>
+
+    <div class="flex items-baseline justify-between">
+      <h2 class="font-display text-2xl tracking-wide">FILTERS</h2>
+      <a href="/series"
+         class="text-[11px] font-semibold text-crawl-dark hover:underline">
+        clear all
+      </a>
+    </div>
+
+    <form id="series-filters" class="mt-3 space-y-1"
+          hx-get="/series/grid" hx-target="#series-grid" hx-swap="innerHTML"
+          hx-trigger="change, keyup delay:300ms from:input[name='q']">
+
+      <div class="space-y-2 pb-2">
+        <input type="text" name="q" value="{{ selected.q }}" placeholder="🔎 series name"
+               class="w-full rounded-lg border-2 border-black px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+        <select name="sort" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs">
+          {% set sort_opts = [
+            ('name_asc', 'Name A → Z'),
+            ('name_desc', 'Name Z → A'),
+            ('count_desc', 'Most comics first'),
+            ('completion_desc', 'Most complete first'),
+          ] %}
+          {% for v, label in sort_opts %}
+            <option value="{{ v }}" {% if selected.sort == v %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {% if facets.statuses %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.statuses or not selected.statuses %}open{% endif %}>
+        <summary>
+          <span>Status{% if selected.statuses %} · <span class="text-crawl-dark">{{ selected.statuses|length }}</span>{% endif %}</span>
+        </summary>
+        <ul class="lb-facet-list">
+          {% set status_labels = {'complete': 'Complete', 'in_progress': 'In progress', 'untracked': 'Untracked'} %}
+          {% for key, n in facets.statuses %}
+          {% if n %}
+          <li>
+            <label>
+              <input type="checkbox" name="status" value="{{ key }}"
+                     class="shrink-0"
+                     {% if key in selected.statuses %}checked{% endif %} />
+              <span class="lb-facet-label">{{ status_labels[key] }}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+
+      {% if facets.fandoms %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.fandoms %}open{% endif %}>
+        <summary>
+          <span>Fandom{% if selected.fandoms %} · <span class="text-crawl-dark">{{ selected.fandoms|length }}</span>{% endif %}</span>
+        </summary>
+        <ul class="lb-facet-list">
+          {% for name, n in facets.fandoms %}
+          <li>
+            <label>
+              <input type="checkbox" name="fandom" value="{{ name }}"
+                     class="shrink-0"
+                     {% if name in selected.fandoms %}checked{% endif %} />
+              <span class="lb-facet-label" title="{{ name }}">{{ name | title }}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+
+      {% if facets.publishers %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.publishers %}open{% endif %}>
+        <summary>
+          <span>Publisher{% if selected.publishers %} · <span class="text-crawl-dark">{{ selected.publishers|length }}</span>{% endif %}</span>
+        </summary>
+        <ul class="lb-facet-list">
+          {% for name, n in facets.publishers %}
+          <li>
+            <label>
+              <input type="checkbox" name="publisher" value="{{ name }}"
+                     class="shrink-0"
+                     {% if name in selected.publishers %}checked{% endif %} />
+              <span class="lb-facet-label" title="{{ name }}">{{ name }}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </form>
+  </aside>
+
+  <section>
+    <div class="flex items-baseline justify-between">
+      <h2 class="font-display text-3xl tracking-wide">YOUR SERIES</h2>
+      <p class="text-sm text-gray-600">{{ total }} series</p>
+    </div>
+    <div id="series-grid" class="mt-6">
+      {% include "partials/_series_grid.html" %}
+    </div>
+  </section>
+</div>
+
+<script>
+  function lbFiltersToggle(open) {
+    const aside = document.getElementById('lb-filters-aside');
+    const bd = document.getElementById('lb-filters-backdrop');
+    if (!aside || !bd) return;
+    const should = (open === undefined) ? !aside.classList.contains('open') : !!open;
+    aside.classList.toggle('open', should);
+    bd.classList.toggle('open', should);
+    document.body.style.overflow = should ? 'hidden' : '';
+  }
+  document.getElementById('series-filters')?.addEventListener('change', () => {
+    if (window.innerWidth < 1024) lbFiltersToggle(false);
+  });
+</script>
+{% endblock %}

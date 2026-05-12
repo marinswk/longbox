@@ -1,0 +1,35 @@
+{% extends "_base.html" %}
+{% block title %}Tags — Longbox{% endblock %}
+{% block content %}
+
+<h2 class="font-display text-3xl tracking-wide">TAGS</h2>
+
+{% if tags %}
+<p class="mt-2 text-sm text-gray-600">
+  {{ tags | length }} tag{{ '' if tags|length == 1 else 's' }} across your library.
+  Click any tag to browse its comics.
+</p>
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <ul class="flex flex-wrap gap-2">
+    {% for t in tags %}
+    <li>
+      <a href="/library?tag={{ t.name | urlencode }}"
+         class="inline-flex items-center gap-2 rounded-full border-2 border-black bg-white px-3 py-1 text-sm font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5 hover:bg-paper-warm">
+        <span>{{ t.name }}</span>
+        <span class="rounded-full bg-crawl px-2 text-xs font-bold text-black">{{ t.count }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <p class="text-sm">
+    No tags yet. Open any comic and add a tag from its detail page —
+    they'll show up here so you can browse them in one click.
+  </p>
+</section>
+{% endif %}
+
+{% endblock %}

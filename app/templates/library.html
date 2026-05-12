@@ -1,0 +1,363 @@
+{% extends "_base.html" %}
+{% block title %}Library — Longbox{% endblock %}
+{% block content %}
+{# Mobile filter access: floating "🎛 Filters" button (lg:hidden) +
+   backdrop. Tapping the button reveals the aside as a bottom-sheet.
+   The aside itself owns the open/close transform via `.lb-filters-drawer`
+   in _base.html — `lg:static lg:translate-y-0` wins on desktop. #}
+<button type="button" id="lb-filters-fab"
+        onclick="lbFiltersToggle()"
+        aria-label="Open filters"
+        class="fixed bottom-4 right-4 z-30 inline-flex h-12 items-center gap-1 rounded-full border-4 border-black bg-crawl px-4 font-semibold text-black shadow-[4px_4px_0_0_#000] hover:-translate-y-0.5 lg:hidden">
+  🎛 Filters
+</button>
+<div id="lb-filters-backdrop" class="lb-filters-backdrop fixed inset-0 z-40 bg-black/60 lg:hidden"
+     onclick="lbFiltersToggle(false)" aria-hidden="true"></div>
+
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
+
+  <aside id="lb-filters-aside"
+         class="lb-filters-drawer panel fixed inset-x-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto rounded-t-3xl p-4 pb-safe
+                lg:static lg:max-h-[calc(100vh-2rem)] lg:rounded-3xl lg:sticky lg:top-4 lg:h-fit">
+    {# Style hooks for the redesigned filter sidebar. Kept inline so the
+       sidebar is self-contained and the rest of the app's styling
+       doesn't have to know about <details> / facet structure.
+       Toggle arrow rotates when a section opens; long lists clip to
+       a max-height with their own scroll. #}
+    <style>
+      .lb-filter > summary { list-style: none; cursor: pointer;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.5rem 0.25rem; font-weight: 600; font-size: 0.7rem;
+        text-transform: uppercase; letter-spacing: 0.04em; }
+      .lb-filter > summary::-webkit-details-marker { display: none; }
+      .lb-filter > summary::after { content: "▾"; font-size: 0.7rem;
+        color: #4b5563; transition: transform 0.15s ease; }
+      .lb-filter:not([open]) > summary::after { transform: rotate(-90deg); }
+      .lb-filter[open] > summary { color: #a17900; }   /* crawl-dark */
+      .lb-facet-list { max-height: 12rem; overflow-y: auto;
+        padding-right: 0.25rem; margin: 0.25rem 0 0.5rem; }
+      .lb-facet-list label { display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.125rem 0.25rem; border-radius: 0.25rem; cursor: pointer;
+        font-size: 0.8rem; line-height: 1.2rem; }
+      .lb-facet-list label:hover { background: rgba(255, 232, 31, 0.18); }
+      .lb-facet-list .lb-facet-label { min-width: 0; flex: 1 1 auto;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lb-facet-list .lb-facet-count { flex: none; color: #6b7280;
+        font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+    </style>
+
+    <div class="flex items-baseline justify-between">
+      <h2 class="font-display text-2xl tracking-wide">FILTERS</h2>
+      <a href="/library"
+         class="text-[11px] font-semibold text-crawl-dark hover:underline">
+        clear all
+      </a>
+    </div>
+
+    <form id="filters" class="mt-3 space-y-1"
+          hx-get="/library/grid" hx-target="#library-grid" hx-swap="innerHTML"
+          hx-trigger="change, keyup delay:300ms from:input[name='q']">
+
+      <div class="space-y-2 pb-2">
+        <input type="text" name="q" value="{{ selected.q }}" placeholder="🔎 title or series"
+               class="w-full rounded-lg border-2 border-black px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+        <select name="group" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs"
+                title="Group by">
+          {% for opt in ['none', 'series', 'publisher', 'year'] %}
+            <option value="{{ opt }}" {% if selected.group == opt %}selected{% endif %}>
+              Group: {{ opt|capitalize }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {# Reusable checkbox-list block. Wrapped in <details> so each facet
+         is independently collapsible. Long values truncate via CSS class
+         (`lb-facet-label`) instead of inline utility soup. #}
+      {% macro checkbox_facet(legend, field, options, selected_set, open=false, display='lower') -%}
+      <details class="lb-filter border-t-2 border-black/10" {% if open or selected_set %}open{% endif %}>
+        <summary>
+          <span>{{ legend }}{% if selected_set %} · <span class="text-crawl-dark">{{ selected_set|length }}</span>{% endif %}</span>
+        </summary>
+        <ul class="lb-facet-list">
+          {% for name, n in options %}
+          <li>
+            <label>
+              <input type="checkbox" name="{{ field }}" value="{{ name }}"
+                     class="shrink-0"
+                     {% if name in selected_set %}checked{% endif %} />
+              <span class="lb-facet-label" title="{{ name }}">{% if display == 'title' %}{{ name | title }}{% else %}{{ name }}{% endif %}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {%- endmacro %}
+
+      {% if facets.fandoms %}
+        {{ checkbox_facet('Fandom', 'fandom', facets.fandoms, selected.fandoms, open=true, display='title') }}
+      {% endif %}
+
+      {% if facets.publishers %}
+        {{ checkbox_facet('Publisher', 'publisher', facets.publishers, selected.publishers) }}
+      {% endif %}
+
+      {% if facets.series %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.series %}open{% endif %}>
+        <summary>
+          <span>Series{% if selected.series %} · <span class="text-crawl-dark">{{ selected.series|length }}</span>{% endif %}</span>
+        </summary>
+        {% set current_series = selected.series[0] if selected.series else '' %}
+        <select name="series"
+                class="mt-1 mb-2 w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs">
+          <option value="">All series</option>
+          {% for name, n in facets.series %}
+            <option value="{{ name }}" title="{{ name }}"
+                    {% if name == current_series %}selected{% endif %}>{{ name }} ({{ n }})</option>
+          {% endfor %}
+        </select>
+      </details>
+      {% endif %}
+
+      {% if facets.arcs %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.arcs %}open{% endif %}>
+        <summary>
+          <span>Story arc{% if selected.arcs %} · <span class="text-crawl-dark">{{ selected.arcs|length }}</span>{% endif %}</span>
+        </summary>
+        {% set current_arc = selected.arcs[0] if selected.arcs else '' %}
+        <select name="arc"
+                class="mt-1 mb-2 w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs">
+          <option value="">All arcs</option>
+          {% for name, n in facets.arcs %}
+            <option value="{{ name }}" title="{{ name }}"
+                    {% if name == current_arc %}selected{% endif %}>{{ name }} ({{ n }})</option>
+          {% endfor %}
+        </select>
+      </details>
+      {% endif %}
+
+      {% if facets.years %}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.years %}open{% endif %}>
+        <summary>
+          <span>Year{% if selected.years %} · <span class="text-crawl-dark">{{ selected.years|length }}</span>{% endif %}</span>
+        </summary>
+        <ul class="lb-facet-list">
+          {% for y, n in facets.years %}
+          <li>
+            <label>
+              <input type="checkbox" name="year" value="{{ y }}"
+                     class="shrink-0"
+                     {% if y in selected.years %}checked{% endif %} />
+              <span class="lb-facet-label">{{ y }}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+
+      {% if facets.formats %}
+        {{ checkbox_facet('Format', 'format', facets.formats, selected.formats, display='title') }}
+      {% endif %}
+      {% if facets.canons %}
+        {{ checkbox_facet('Continuity', 'canon', facets.canons, selected.canons, display='title') }}
+      {% endif %}
+      {% if facets.eras %}
+        {{ checkbox_facet('Era', 'era', facets.eras, selected.eras, display='title') }}
+      {% endif %}
+      {% if facets.tags %}
+      {# Tags get their own client-side search box because lists can run
+         long (200+ entries). #}
+      <details class="lb-filter border-t-2 border-black/10" {% if selected.tags %}open{% endif %}>
+        <summary>
+          <span>Tag{% if selected.tags %} · <span class="text-crawl-dark">{{ selected.tags|length }}</span>{% endif %}</span>
+        </summary>
+        <input type="text" placeholder="filter tags…"
+               oninput="(function(el){
+                 var q = el.value.toLowerCase();
+                 el.parentElement.querySelectorAll('ul.lb-facet-list > li').forEach(function(li){
+                   li.style.display = li.dataset.name.indexOf(q) === -1 ? 'none' : '';
+                 });
+               })(this)"
+               class="mt-1 mb-1 w-full rounded border-2 border-black px-2 py-1 text-xs" />
+        <ul class="lb-facet-list">
+          {% for name, n in facets.tags %}
+          <li data-name="{{ name|lower }}">
+            <label>
+              <input type="checkbox" name="tag" value="{{ name }}"
+                     class="shrink-0"
+                     {% if name in selected.tags %}checked{% endif %} />
+              <span class="lb-facet-label" title="{{ name }}">{{ name }}</span>
+              <span class="lb-facet-count">{{ n }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% if facets.read_statuses %}
+        {{ checkbox_facet('Read status', 'read_status', facets.read_statuses, selected.read_statuses, display='title') }}
+      {% endif %}
+      {% if facets.storages %}
+        {{ checkbox_facet('Storage', 'storage', facets.storages, selected.storages) }}
+      {% endif %}
+    </form>
+  </aside>
+
+  <section>
+    <div class="flex items-baseline justify-between">
+      <h2 class="font-display text-3xl tracking-wide">YOUR LIBRARY</h2>
+      <p class="text-sm text-gray-600">{{ total }} comic{{ '' if total == 1 else 's' }}</p>
+    </div>
+    <div id="library-grid" class="mt-6">
+      {% include "partials/_library_grid.html" %}
+    </div>
+  </section>
+</div>
+
+{# ─────────────  Bulk-edit floating bar (hidden until ≥1 selected) ───────── #}
+<div id="lb-bulk-bar"
+     class="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center p-4 pb-safe"
+     style="display:none">
+  <form method="post" action="/library/bulk"
+        class="pointer-events-auto w-full max-w-4xl rounded-2xl border-4 border-black bg-paper p-4 shadow-[6px_6px_0_0_#000]">
+    <input type="hidden" name="return_to" id="lb-bulk-return-to" value="/library" />
+    <div id="lb-bulk-comic-ids"></div>
+
+    <div class="flex flex-wrap items-end gap-3">
+      <p class="font-display text-lg tracking-wide">
+        <span id="lb-bulk-count">0</span> selected
+      </p>
+
+      <label class="text-xs">Storage
+        <input type="text" name="storage_location" placeholder="Long Box 1, Shelf A, …"
+               class="mt-0.5 block w-40 rounded border-2 border-black px-2 py-1.5 text-sm" />
+      </label>
+      <label class="text-xs">Format
+        <select name="format" class="mt-0.5 block w-36 rounded border-2 border-black px-2 py-1.5 text-sm">
+          <option value="">— keep —</option>
+          {% for opt in ['single issue', 'trade paperback', 'hardcover', 'omnibus', 'digital'] %}
+            <option value="{{ opt }}">{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="text-xs">Continuity
+        <select name="canon" class="mt-0.5 block w-32 rounded border-2 border-black px-2 py-1.5 text-sm">
+          <option value="">— keep —</option>
+          <option value="canon">canon</option>
+          <option value="legends">legends</option>
+        </select>
+      </label>
+      <label class="text-xs">Era
+        <input type="text" name="era" placeholder="Imperial, …"
+               class="mt-0.5 block w-32 rounded border-2 border-black px-2 py-1.5 text-sm" />
+      </label>
+      <label class="text-xs">Add tags
+        <input type="text" name="add_tags" placeholder="favorite, must-read"
+               class="mt-0.5 block w-44 rounded border-2 border-black px-2 py-1.5 text-sm" />
+      </label>
+      <label class="text-xs">Remove tags
+        <input type="text" name="remove_tags" placeholder="comma-separated"
+               class="mt-0.5 block w-44 rounded border-2 border-black px-2 py-1.5 text-sm" />
+      </label>
+      <label class="flex cursor-pointer items-center gap-1 text-xs">
+        <input type="checkbox" name="mark_read" value="on" class="h-4 w-4 accent-black" />
+        Mark first copy read
+      </label>
+
+      <div class="ml-auto flex gap-2">
+        <button type="button" onclick="lbBulk.clear()"
+                class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000]">
+          Clear
+        </button>
+        <button type="submit"
+                class="rounded-lg border-4 border-black bg-crawl px-4 py-1.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000]">
+          Apply
+        </button>
+      </div>
+    </div>
+    <p class="mt-2 text-[11px] text-gray-600">
+      Empty fields are left untouched. Storage applies to every copy of each
+      selected comic. "Mark read" flips the first not-yet-read copy with
+      today's date.
+    </p>
+  </form>
+</div>
+
+<script>
+  // Library bulk-edit selection state. Lives in window.lbBulk so the inline
+  // onchange/onclick handlers in the grid partial (which gets re-rendered
+  // by HTMX on pagination) can call it. Selections survive grid swaps as
+  // long as the user stays on /library.
+  (function () {
+    const selected = new Set();
+    const bar = document.getElementById('lb-bulk-bar');
+    const countEl = document.getElementById('lb-bulk-count');
+    const idsHost = document.getElementById('lb-bulk-comic-ids');
+    const returnTo = document.getElementById('lb-bulk-return-to');
+
+    function syncChecks() {
+      document.querySelectorAll('.lb-bulk-check').forEach((cb) => {
+        cb.checked = selected.has(cb.value);
+      });
+    }
+    function render() {
+      countEl.textContent = String(selected.size);
+      bar.style.display = selected.size ? 'flex' : 'none';
+      idsHost.innerHTML = '';
+      selected.forEach((id) => {
+        const i = document.createElement('input');
+        i.type = 'hidden';
+        i.name = 'comic_id';
+        i.value = id;
+        idsHost.appendChild(i);
+      });
+      // Preserve current filters when bulk-edit redirects back.
+      returnTo.value = window.location.pathname + window.location.search;
+    }
+    function update() {
+      // Pull current state from rendered checkboxes (handles both check + uncheck).
+      document.querySelectorAll('.lb-bulk-check').forEach((cb) => {
+        if (cb.checked) selected.add(cb.value);
+        else selected.delete(cb.value);
+      });
+      render();
+    }
+    function clear() {
+      selected.clear();
+      syncChecks();
+      render();
+    }
+    // Re-sync after HTMX swaps the grid (pagination, filter changes).
+    document.body.addEventListener('htmx:afterSwap', (e) => {
+      if (e.target && e.target.id === 'library-grid') syncChecks();
+    });
+    window.lbBulk = { update, clear };
+    render();
+  })();
+</script>
+
+<script>
+  // Filter drawer toggle. Reads the explicit boolean arg to allow the
+  // backdrop's `onclick` to force-close without needing to know prior state.
+  function lbFiltersToggle(open) {
+    const aside = document.getElementById('lb-filters-aside');
+    const bd = document.getElementById('lb-filters-backdrop');
+    if (!aside || !bd) return;
+    const should = (open === undefined) ? !aside.classList.contains('open') : !!open;
+    aside.classList.toggle('open', should);
+    bd.classList.toggle('open', should);
+    // Lock body scroll while the drawer is open so the page behind doesn't
+    // drift as the user scrolls the filter list.
+    document.body.style.overflow = should ? 'hidden' : '';
+  }
+  // Close the drawer whenever the user makes a selection — keeps the
+  // mobile flow snappy (one filter at a time instead of a giant batch
+  // followed by a manual close).
+  document.getElementById('filters')?.addEventListener('change', () => {
+    if (window.innerWidth < 1024) lbFiltersToggle(false);
+  });
+</script>
+{% endblock %}

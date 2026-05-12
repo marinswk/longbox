@@ -1,0 +1,55 @@
+{# Reusable fandom picker.
+
+Required context:
+  - fandoms: list of (name, count) tuples — output of `list_fandoms()`
+Optional context:
+  - current_fandom: str | None — preselected value; switches dropdown to it
+  - input_id_prefix: str — defaults to 'fandom' (override when multiple
+    pickers appear on the same page)
+
+Submitted form fields:
+  - fandom        : the dropdown value (existing fandom name, or '__NEW__')
+  - fandom_new    : the free-text override; wins over `fandom` if non-empty
+
+Server normalizes to lowercase + collapsed whitespace before saving.
+#}
+{% set _prefix = input_id_prefix | default('fandom') %}
+<div class="panel rounded-2xl border-4 border-black bg-paper-warm/40 p-4">
+  <div class="flex items-baseline justify-between gap-3">
+    <h4 class="font-display text-xl tracking-wide">FANDOM</h4>
+    <span class="text-[11px] text-gray-600">optional</span>
+  </div>
+  <p class="mt-1 text-xs text-gray-700">
+    Pick the universe / brand this comic belongs to. Used for filtering and stats.
+  </p>
+
+  <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">Existing</span>
+      <select name="fandom"
+              id="{{ _prefix }}-select"
+              onchange="document.getElementById('{{ _prefix }}-new-row').style.display = (this.value === '__NEW__') ? '' : 'none'"
+              class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl">
+        <option value="" {% if not current_fandom %}selected{% endif %}>— none —</option>
+        {% for name, count in fandoms %}
+          <option value="{{ name }}" {% if current_fandom == name %}selected{% endif %}>
+            {{ name | title }} ({{ count }})
+          </option>
+        {% endfor %}
+        <option value="__NEW__">+ New fandom…</option>
+      </select>
+    </label>
+
+    <div id="{{ _prefix }}-new-row" style="display: none">
+      <label class="block">
+        <span class="text-xs font-semibold uppercase">New fandom</span>
+        <input type="text" name="fandom_new" maxlength="60"
+               placeholder="e.g. Locke &amp; Key"
+               class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+        <span class="mt-1 block text-[11px] text-gray-600">
+          Lowercase will be applied automatically. Leave blank to keep the picker selection.
+        </span>
+      </label>
+    </div>
+  </div>
+</div>

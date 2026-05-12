@@ -1,0 +1,16 @@
+{% if error %}
+<div class="rounded-2xl border-4 border-red-700 bg-red-50 p-3 text-sm text-red-900">
+  ✗ {{ error }}
+</div>
+{% else %}
+<div class="rounded-2xl border-4 border-black bg-crawl-light/60 p-3 text-sm">
+  ✓ Wiped <strong>{{ outcome.rows_deleted }}</strong> rows from the database.
+  {% if outcome.cover_files_deleted %}
+    Deleted <strong>{{ outcome.cover_files_deleted }}</strong> cover file{{ '' if outcome.cover_files_deleted == 1 else 's' }}.
+  {% endif %}
+  <span class="block mt-1 text-xs text-gray-700">
+    The schema is intact — head over to <a href="/add" class="text-crawl-dark hover:underline">Add</a>
+    or <a href="/admin#import" class="text-crawl-dark hover:underline">Import</a> to start over.
+  </span>
+</div>
+{% endif %}

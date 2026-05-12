@@ -1,0 +1,286 @@
+{% extends "_base.html" %}
+{% block title %}Add a comic — Longbox{% endblock %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<section class="panel rounded-3xl p-8">
+  <h2 class="font-display text-4xl tracking-wide">ADD A COMIC</h2>
+  <p class="mt-2 text-gray-600">
+    Type or paste an <strong>ISBN</strong> (10 or 13 digits), a single-issue
+    <strong>UPC barcode</strong> (12 or 17 digits), or a <strong>ComicVine /
+    Metron issue ID</strong>. Star-Wars-published comics resolve via
+    Wookieepedia, everything else via Open Library / ComicVine / Metron.
+  </p>
+
+  <form
+    id="lookup-form"
+    class="mt-6 flex flex-col gap-3 sm:flex-row"
+    hx-post="/add/lookup"
+    hx-target="#flow"
+    hx-swap="innerHTML"
+  >
+    <input
+      type="text"
+      name="identifier"
+      id="identifier"
+      required
+      autofocus
+      inputmode="numeric"
+      autocomplete="off"
+      placeholder="9781607066019"
+      class="flex-1 rounded-lg border-4 border-black px-4 py-3 font-mono text-lg focus:outline-none focus:ring-4 focus:ring-crawl-light"
+    />
+    <button
+      type="submit"
+      class="rounded-lg border-4 border-black bg-crawl px-6 py-3 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5"
+    >
+      Look up
+    </button>
+    <button
+      type="button"
+      id="scan-toggle"
+      class="rounded-lg border-4 border-black bg-white px-6 py-3 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5"
+    >
+      📷 Scan
+    </button>
+  </form>
+
+  {# Fullscreen scanner overlay. Hidden by default; revealed when the
+     "📷 Scan" button is tapped. Built as a fixed-position div so it
+     covers the entire viewport on mobile (most useful) and acts as a
+     centered modal on desktop. #}
+  <div id="scanner-overlay"
+       class="fixed inset-0 z-50 hidden flex-col items-center justify-center bg-black/95 px-safe pt-safe pb-safe"
+       role="dialog" aria-modal="true" aria-label="Barcode scanner">
+
+    {# Live camera feed lands inside #scanner via html5-qrcode. The
+       outer wrapper caps the size on desktop and forces a 4:3
+       aspect-ratio so the preview stays predictable across devices. #}
+    <div class="relative w-full max-w-md">
+      <div id="scanner" class="aspect-[4/3] w-full overflow-hidden rounded-xl border-4 border-crawl bg-black"></div>
+
+      {# Corner brackets — pure CSS, no images. Helps the user line up
+         a barcode at the center of the frame. #}
+      <div class="pointer-events-none absolute inset-6 sm:inset-8">
+        <div class="absolute left-0 top-0 h-8 w-8 border-l-4 border-t-4 border-crawl rounded-tl"></div>
+        <div class="absolute right-0 top-0 h-8 w-8 border-r-4 border-t-4 border-crawl rounded-tr"></div>
+        <div class="absolute bottom-0 left-0 h-8 w-8 border-b-4 border-l-4 border-crawl rounded-bl"></div>
+        <div class="absolute bottom-0 right-0 h-8 w-8 border-b-4 border-r-4 border-crawl rounded-br"></div>
+      </div>
+    </div>
+
+    <p id="scanner-msg" class="mt-4 max-w-md px-4 text-center text-sm text-paper">
+      Aim a comic's barcode at the camera. Works with EAN-13 (ISBN) and
+      UPC-A (single issues).
+    </p>
+
+    <div class="mt-4 flex flex-wrap items-center justify-center gap-3">
+      {# Torch toggle: hidden until the camera reports it can change
+         torch state via MediaStreamTrack.getCapabilities(). #}
+      <button type="button" id="scanner-torch" hidden
+              class="rounded-lg border-4 border-black bg-white px-5 py-2 font-semibold text-black shadow-[3px_3px_0_0_#000]">
+        💡 Light
+      </button>
+      <button type="button" id="scanner-close"
+              class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[3px_3px_0_0_#000]">
+        ✕ Close
+      </button>
+    </div>
+  </div>
+
+  {# ─────────────────────────  Free-text search  ───────────────────────── #}
+  <details class="mt-6 rounded-xl border-2 border-black bg-paper-warm/40 p-4 text-sm">
+    <summary class="cursor-pointer font-semibold uppercase tracking-wide">
+      Or search by title / series
+    </summary>
+    <p class="mt-2 text-xs text-gray-600">
+      Free-text search across Wookieepedia, ComicVine and Metron. Returns
+      up to 60 candidates paginated 12 at a time.
+    </p>
+    <form
+      class="mt-3 flex flex-col gap-3 sm:flex-row"
+      hx-post="/add/text-search"
+      hx-target="#flow"
+      hx-swap="innerHTML"
+    >
+      <input
+        type="text"
+        name="q"
+        autocomplete="off"
+        placeholder="Saga, Y The Last Man, Brian K. Vaughan…"
+        class="flex-1 rounded-lg border-2 border-black px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl"
+      />
+      <button
+        type="submit"
+        class="rounded-lg border-2 border-black bg-crawl px-5 py-2.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5"
+      >
+        Search
+      </button>
+    </form>
+  </details>
+</section>
+
+<section id="flow" class="mt-8"></section>
+
+<script>
+  // Fullscreen barcode scanner. Wraps the existing html5-qrcode library
+  // with a modal overlay, torch toggle (where supported), and haptic
+  // feedback so the on-phone experience feels app-like.
+  (function () {
+    const toggle  = document.getElementById('scan-toggle');
+    const overlay = document.getElementById('scanner-overlay');
+    const closeBt = document.getElementById('scanner-close');
+    const torchBt = document.getElementById('scanner-torch');
+    const msg     = document.getElementById('scanner-msg');
+    const input   = document.getElementById('identifier');
+    const form    = document.getElementById('lookup-form');
+    const elementId = 'scanner';
+
+    let qr = null;        // active Html5Qrcode instance
+    let busy = false;     // scanning in progress
+    let firing = false;   // we already got a hit, don't fire again
+    let torchOn = false;  // current torch state (best-effort)
+
+    function setMsg(text, kind) {
+      msg.textContent = text;
+      msg.className =
+        kind === 'error' ? 'mt-4 max-w-md px-4 text-center text-sm text-red-300'
+        : kind === 'ok'  ? 'mt-4 max-w-md px-4 text-center text-sm text-crawl'
+        :                  'mt-4 max-w-md px-4 text-center text-sm text-paper';
+    }
+
+    function showOverlay() {
+      overlay.classList.remove('hidden');
+      overlay.classList.add('flex');
+      document.body.style.overflow = 'hidden';   // lock page scroll
+    }
+    function hideOverlay() {
+      overlay.classList.add('hidden');
+      overlay.classList.remove('flex');
+      document.body.style.overflow = '';
+    }
+
+    async function stop() {
+      if (qr) {
+        try { await qr.stop(); } catch {}
+        try { qr.clear(); } catch {}
+        qr = null;
+      }
+      busy = false;
+      firing = false;
+      torchOn = false;
+      torchBt.hidden = true;
+      torchBt.textContent = '💡 Light';
+      hideOverlay();
+    }
+
+    async function start() {
+      if (busy) return;
+      if (!window.Html5Qrcode) {
+        showOverlay();
+        setMsg('Scanner library failed to load. Check your network.', 'error');
+        return;
+      }
+      busy = true;
+      showOverlay();
+      setMsg('Starting camera…');
+
+      qr = new Html5Qrcode(elementId);
+      const config = {
+        fps: 12,
+        qrbox: (vw, vh) => {
+          // Wide-and-short box favours linear barcodes over square QR codes.
+          const w = Math.min(vw - 40, 360);
+          const h = Math.min(vh - 60, 140);
+          return { width: w, height: h };
+        },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
+      };
+      try {
+        await qr.start(
+          { facingMode: 'environment' },
+          config,
+          onDecoded,
+          () => {} // per-frame failures: ignore
+        );
+        setMsg('Aim at a barcode…');
+        // Expose the torch toggle if the active track supports it.
+        await maybeShowTorch();
+      } catch (err) {
+        const msgText =
+          location.protocol !== 'https:' && location.hostname !== 'localhost'
+            ? 'Camera needs HTTPS. Use https:// or localhost, or set up a reverse proxy with TLS.'
+            : /Permission/.test(String(err))
+            ? 'Camera permission denied. Allow access in your browser settings and try again.'
+            : 'Could not start camera: ' + err;
+        setMsg(msgText, 'error');
+        // Keep the overlay open so the user can read the error + close.
+        busy = false;
+      }
+    }
+
+    // Torch capabilities aren't exposed by html5-qrcode directly; reach
+    // into the active <video> element's underlying MediaStreamTrack.
+    async function maybeShowTorch() {
+      try {
+        const video = overlay.querySelector('video');
+        const track = video?.srcObject?.getVideoTracks?.()[0];
+        const caps  = track?.getCapabilities?.();
+        if (caps && 'torch' in caps) torchBt.hidden = false;
+      } catch {}
+    }
+
+    async function toggleTorch() {
+      try {
+        const video = overlay.querySelector('video');
+        const track = video?.srcObject?.getVideoTracks?.()[0];
+        if (!track) return;
+        torchOn = !torchOn;
+        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+        torchBt.textContent = torchOn ? '💡 Light · on' : '💡 Light';
+      } catch {
+        setMsg('Couldn\'t toggle torch on this device.', 'error');
+      }
+    }
+
+    function onDecoded(text) {
+      if (firing) return;
+      firing = true;
+      // Strip non-digits — most barcode formats return digits only, but a
+      // QR fallback might smuggle in punctuation.
+      const digits = (text || '').replace(/[^0-9]/g, '');
+      input.value = digits || text;
+      setMsg('✓ Scanned: ' + (digits || text), 'ok');
+      // Haptic confirmation. Most Android phones honour navigator.vibrate;
+      // iOS Safari ignores it but the visual feedback is enough on iOS.
+      try { navigator.vibrate && navigator.vibrate([40, 30, 40]); } catch {}
+      // Brief pause so the user sees the confirmation, then close +
+      // submit the lookup form.
+      setTimeout(() => {
+        stop().then(() => {
+          if (window.htmx) htmx.trigger(form, 'submit');
+          else form.requestSubmit();
+        });
+      }, 220);
+    }
+
+    toggle.addEventListener('click', () => (busy ? stop() : start()));
+    closeBt.addEventListener('click', stop);
+    torchBt.addEventListener('click', toggleTorch);
+
+    // Close on Escape key (keyboard users).
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && busy) stop();
+    });
+
+    // Stop the camera if the user navigates away.
+    window.addEventListener('beforeunload', () => qr && qr.stop().catch(() => {}));
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,235 @@
+{% extends "_base.html" %}
+{% block title %}Admin — Longbox{% endblock %}
+{% block content %}
+
+<h2 class="font-display text-3xl tracking-wide">ADMIN</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Library data management — backups, exports, imports, cleanup.
+</p>
+
+{% if flash %}
+<div class="panel mt-4 flex items-start gap-3 rounded-2xl border-4 border-black bg-crawl-light/60 p-3 text-sm">
+  <span class="flex-1">ⓘ {{ flash }}</span>
+  <button type="button" onclick="this.parentElement.remove()"
+          aria-label="Dismiss"
+          class="lb-mini-tap inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border-2 border-black bg-white text-base font-bold leading-none hover:bg-paper-warm">
+    ×
+  </button>
+</div>
+{% endif %}
+
+{# ───────────────────  Sub-nav (anchor pills)  ─────────────────── #}
+<nav class="sticky top-2 z-10 mt-4 -mx-1 flex flex-wrap gap-2 px-1">
+  {% set sub_nav = [
+    ('#backup',  '📦 Backup'),
+    ('#restore', '⏪ Restore'),
+    ('#export',  '📤 Export'),
+    ('#import',  '📥 Import'),
+    ('#cleanup', '🧹 Cleanup'),
+    ('#danger',  '☢ Danger zone'),
+  ] %}
+  {% for href, label in sub_nav %}
+    <a href="{{ href }}"
+       class="inline-flex min-h-11 items-center rounded-full border-2 border-black bg-white px-4 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5 hover:bg-crawl-light/60 sm:min-h-0 sm:py-1">
+      {{ label }}
+    </a>
+  {% endfor %}
+</nav>
+
+{# ───────────────────────  BACKUP  ─────────────────────── #}
+<section id="backup" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">BACKUP</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    The <strong>full backup zip</strong> bundles a JSON dump of every
+    comic, copy, creator, story arc and tag row <em>plus</em> all your
+    cached cover image files. Restoring it on a fresh deployment
+    reproduces the library exactly as it is now.
+  </p>
+  <p class="mt-2 text-xs text-gray-500">
+    Schema version: <span class="font-mono">{{ export_version }}</span>
+  </p>
+
+  <div class="mt-4 flex flex-wrap items-center gap-3">
+    <a href="/api/backup" download
+       class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      ⬇ Full backup (.zip)
+    </a>
+    <button type="button"
+            hx-get="/api/export/preview"
+            hx-target="#export-preview"
+            hx-swap="innerHTML"
+            class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+      Show row counts
+    </button>
+  </div>
+  <pre id="export-preview" class="mt-3 max-h-64 overflow-auto rounded bg-gray-50 p-2 text-[11px] leading-tight"></pre>
+</section>
+
+{# ───────────────────────  RESTORE  ─────────────────────── #}
+<section id="restore" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">RESTORE</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Load a previously-downloaded backup. Accepts both <code>.zip</code>
+    (full backup including covers) and <code>.json</code> (data only).
+    <strong>This replaces every record currently in the library.</strong>
+    The whole load runs inside a single transaction; a failure leaves
+    your existing data untouched.
+  </p>
+
+  <form class="mt-4 space-y-3"
+        hx-post="/admin/import"
+        hx-encoding="multipart/form-data"
+        hx-target="#restore-result"
+        hx-swap="innerHTML"
+        hx-confirm="This will REPLACE every comic, copy, tag, etc. with the contents of the file. Continue?">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">Backup file (.zip or .json)</span>
+      <input type="file" name="backup" accept=".zip,application/zip,application/json,.json" required
+             class="mt-1 w-full rounded border-2 border-black bg-white px-2 py-1.5 text-xs file:mr-2 file:rounded file:border-2 file:border-black file:bg-crawl file:px-2 file:py-1 file:text-xs file:font-semibold file:text-black" />
+    </label>
+    <button type="submit"
+            class="rounded-lg border-4 border-black bg-white px-5 py-2 font-semibold text-red-700 shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      ⚠ Restore from file
+    </button>
+  </form>
+  <div id="restore-result" class="mt-4"></div>
+</section>
+
+{# ───────────────────────  EXPORT  ─────────────────────── #}
+<section id="export" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">EXPORT</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Smaller, more portable downloads than the full backup. Use these when
+    you want the data in a spreadsheet or another tool — neither is
+    re-importable round-trip the way the backup zip is.
+  </p>
+  <div class="mt-4 flex flex-wrap gap-3">
+    <a href="/api/export" download
+       class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5"
+       title="Full schema dump as JSON, no covers.">
+      Data only (.json)
+    </a>
+    <a href="/api/export/csv" download
+       class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5"
+       title="Flat CSV: one row per copy. For spreadsheets.">
+      CSV (one row per copy)
+    </a>
+    <a href="/admin/import/csv/export-library" download
+       class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5"
+       title="One row per comic, headers compatible with the import wizard. Round-trips into a fresh deployment.">
+      CSV (re-importable)
+    </a>
+  </div>
+</section>
+
+{# ───────────────────────  IMPORT  ─────────────────────── #}
+<section id="import" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">IMPORT</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Bulk-add comics from a CSV. The wizard parses your file, lets you map
+    columns, choose which sources to query, review per-row search hits,
+    and commit only what you confirm. Empty rows and section-header rows
+    are skipped automatically.
+  </p>
+  <p class="mt-2 text-xs text-gray-600">
+    Looking for ISBN/UPC/title search for a single comic? Use
+    <a href="/add" class="text-crawl-dark hover:underline">Add</a> instead.
+  </p>
+  <div class="mt-4 flex flex-wrap gap-3">
+    <a href="/admin/import/csv"
+       class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      📥 Start CSV import →
+    </a>
+  </div>
+</section>
+
+{# ───────────────────────  CLEANUP  ─────────────────────── #}
+<section id="cleanup" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">CLEANUP</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Sweep up <strong>orphan series</strong> — Series rows that no Comic
+    points at anymore. Usually a leftover from early add-flow tweaks or
+    from comics that were deleted before auto-pruning was wired in.
+    Safe: removes nothing that's referenced.
+  </p>
+  <button type="button"
+          hx-post="/admin/cleanup-orphans"
+          hx-target="#cleanup-result"
+          hx-swap="innerHTML"
+          class="mt-4 rounded-lg border-2 border-black bg-white px-4 py-2 text-sm font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+    🧹 Prune orphan series
+  </button>
+  <div id="cleanup-result" class="mt-3"></div>
+
+  <h4 class="mt-8 font-display text-xl tracking-wide">FIND INCONSISTENCIES</h4>
+  <p class="mt-2 text-sm text-gray-700">
+    Read-only sweep that flags comics whose stored data shape disagrees
+    with itself — typically the result of a wrong-pick during the import
+    wizard. Each flag is a suggestion; click <strong>Review →</strong> on
+    a row to land on its <code>/repick</code> page and pick the right
+    candidate.
+  </p>
+  <button type="button"
+          hx-get="/admin/inconsistencies"
+          hx-target="#inconsistencies-result"
+          hx-swap="innerHTML"
+          class="mt-4 rounded-lg border-2 border-black bg-white px-4 py-2 text-sm font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+    🩺 Find inconsistencies
+  </button>
+  <div id="inconsistencies-result" class="mt-3"></div>
+</section>
+
+{# ───────────────────────  DANGER ZONE  ─────────────────────── #}
+<section id="danger" class="panel mt-6 scroll-mt-24 rounded-3xl border-4 border-red-700 p-6">
+  <h3 class="font-display text-2xl tracking-wide text-red-800">☢ DANGER ZONE</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Factory reset. Empties every user-data table — comics, copies,
+    series, publishers, creators, characters, story arcs, tags, import
+    sessions, and the upstream metadata cache. The schema stays put so
+    the app keeps running; you can start adding comics again immediately.
+  </p>
+  <p class="mt-2 text-sm font-semibold text-red-800">
+    There is NO undo. Take a backup first if you might want this back.
+  </p>
+
+  <details class="mt-4">
+    <summary class="cursor-pointer rounded-lg border-4 border-red-700 bg-red-50 px-5 py-2 inline-block font-semibold text-red-800 shadow-[4px_4px_0_0_#000] hover:-translate-y-0.5 transition">
+      I understand — show the wipe form
+    </summary>
+    <form class="mt-4 space-y-3 rounded-2xl border-2 border-red-700 bg-red-50/50 p-4"
+          hx-post="/admin/wipe"
+          hx-target="#wipe-result"
+          hx-swap="innerHTML"
+          hx-confirm="Last chance. Wipe every comic, copy, series, tag, etc. Continue?">
+      <label class="block">
+        <span class="text-xs font-semibold uppercase">
+          Type <code class="rounded bg-white px-1 py-0.5 text-red-800">WIPE EVERYTHING</code> to confirm
+        </span>
+        <input type="text" name="confirm" required autocomplete="off"
+               placeholder="WIPE EVERYTHING"
+               class="mt-1 w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-700" />
+      </label>
+      <label class="flex cursor-pointer items-center gap-2 text-xs">
+        <input type="checkbox" name="delete_cover_files" value="on" checked
+               class="h-4 w-4 accent-black" />
+        Also delete every cover image file from disk
+      </label>
+      <button type="submit"
+              class="rounded-lg border-4 border-black bg-red-700 px-6 py-2 font-semibold text-white shadow-[4px_4px_0_0_#000] hover:-translate-y-0.5">
+        ☢ Wipe everything
+      </button>
+    </form>
+  </details>
+  <div id="wipe-result" class="mt-3"></div>
+</section>
+
+<script>
+  // Render the export-preview blob as pretty JSON when it lands.
+  document.body.addEventListener('htmx:afterSwap', (e) => {
+    if (e.target.id !== 'export-preview') return;
+    const txt = e.target.textContent.trim();
+    if (!txt) return;
+    try { e.target.textContent = JSON.stringify(JSON.parse(txt), null, 2); } catch {}
+  });
+</script>
+{% endblock %}

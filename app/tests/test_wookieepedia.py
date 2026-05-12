@@ -1,0 +1,157 @@
+"""Wookieepedia client tests."""
+
+import asyncio
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+import respx
+
+from app.services import wookieepedia
+from app.services.wookieepedia import _clean, _find_infobox, _parse_date
+
+
+# ---------------------------------------------------------------------------
+# Pure-function unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_clean_strips_links_refs_and_emphasis():
+    raw = "[[Marc Guggenheim]]<ref name=\"x\">cite</ref> and ''italic'' text"
+    assert _clean(raw) == "Marc Guggenheim and italic text"
+
+
+def test_clean_handles_piped_link_and_self_closing_ref():
+    raw = "[[Star Wars (2020)|''Star Wars'' (2020)]]<ref name=\"x\" />"
+    assert _clean(raw) == "Star Wars (2020)"
+
+
+def test_clean_strips_br_tags_and_leading_bullets():
+    assert _clean("Vol. 2 –<br />A Higher Path") == "Vol. 2 – A Higher Path"
+    assert _clean("*''[[Star Wars: Jedi Knights]]''") == "Star Wars: Jedi Knights"
+    assert _clean("*A\n*B") == "A\nB"
+
+
+def test_parse_date_full_and_year_only():
+    assert _parse_date("April 14, 2026") == "2026-04-14"
+    assert _parse_date("July 1977") == "1977"
+    assert _parse_date("nothing") is None
+
+
+def test_find_infobox_picks_comicbook_template():
+    wt = (
+        "{{Top|rwm|can}}\n"
+        "{{ComicBook\n"
+        "|title=''Jedi Knights'' 1\n"
+        "|writer=[[Marc Guggenheim]]\n"
+        "|publisher=[[Marvel Comics]]\n"
+        "|series=''[[Star Wars: Jedi Knights]]''\n"
+        "|issue=1\n"
+        "|pages=26\n"
+        "|release date=[[March 5]], [[2025]]\n"
+        "|image=[[File:Jedi-Knights-1-Final-Cover.jpg]]\n"
+        "}}\n"
+        "{{Reflist}}\n"
+    )
+    fields = _find_infobox(wt)
+    assert fields is not None
+    assert fields["__template__"] == "ComicBook"
+    assert fields["title"] == "Jedi Knights 1"
+    assert fields["writer"] == "Marc Guggenheim"
+    assert fields["publisher"] == "Marvel Comics"
+    assert fields["series"] == "Star Wars: Jedi Knights"
+    assert fields["issue"] == "1"
+    assert fields["pages"] == "26"
+
+
+def test_find_infobox_returns_none_for_pages_without_one():
+    wt = "{{Top|rwm|can}}\n{{Reflist}}\n"
+    assert _find_infobox(wt) is None
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: search → parse → image
+# ---------------------------------------------------------------------------
+
+
+SEARCH_HIT = {
+    "query": {"search": [{"title": "Jedi Knights 1", "pageid": 999}]}
+}
+
+PARSE_HIT = {
+    "parse": {
+        "title": "Jedi Knights 1",
+        "wikitext": {
+            "*": (
+                "{{Top|rwm|can}}\n"
+                "{{ComicBook\n"
+                "|image=[[File:Jedi-Knights-1-Final-Cover.jpg]]\n"
+                "|title=''Jedi Knights'' 1\n"
+                "|writer=[[Marc Guggenheim]]\n"
+                "|publisher=[[Marvel Comics]]\n"
+                "|release date=[[March 5]], [[2025]]\n"
+                "|pages=26\n"
+                "|upc=75960621106700111\n"
+                "|series=''[[Star Wars: Jedi Knights]]''\n"
+                "|issue=1\n"
+                "}}\n"
+            )
+        },
+    }
+}
+
+IMAGE_HIT = {
+    "query": {
+        "pages": {
+            "-1": {
+                "title": "File:Jedi-Knights-1-Final-Cover.jpg",
+                "imageinfo": [
+                    {"url": "https://static.wikia.nocookie.net/jk1.jpg"}
+                ],
+            }
+        }
+    }
+}
+
+
+def _route_api(request: httpx.Request) -> httpx.Response:
+    qs = parse_qs(urlparse(str(request.url)).query)
+    action = qs.get("action", [None])[0]
+    if action == "query" and "list" in qs and qs["list"][0] == "search":
+        return httpx.Response(200, json=SEARCH_HIT)
+    if action == "parse":
+        return httpx.Response(200, json=PARSE_HIT)
+    if action == "query" and "prop" in qs and "imageinfo" in qs["prop"][0]:
+        return httpx.Response(200, json=IMAGE_HIT)
+    return httpx.Response(404, json={"error": "unrouted"})
+
+
+@respx.mock
+def test_search_isbn_returns_one_candidate_with_resolved_cover():
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route_api)
+    [c] = asyncio.run(wookieepedia.search_isbn("9781302963217"))
+    assert c.source == "wookieepedia"
+    assert c.title == "Jedi Knights 1"
+    assert c.publisher == "Marvel Comics"
+    assert c.series == "Star Wars: Jedi Knights"
+    assert c.issue_number == "1"
+    assert c.page_count == 26
+    assert c.cover_date == "2025-03-05"
+    assert c.cover_url == "https://static.wikia.nocookie.net/jk1.jpg"
+    # source_id is the article title for navigation back to the wiki
+    assert c.source_id == "Jedi Knights 1"
+
+
+@respx.mock
+def test_search_upc_uses_same_pipeline():
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route_api)
+    [c] = asyncio.run(wookieepedia.search_upc("75960621106700111"))
+    assert c.source == "wookieepedia"
+    assert c.title == "Jedi Knights 1"
+
+
+@respx.mock
+def test_search_returns_empty_list_when_no_hits():
+    respx.get("https://starwars.fandom.com/api.php").mock(
+        return_value=httpx.Response(200, json={"query": {"search": []}})
+    )
+    assert asyncio.run(wookieepedia.search_isbn("0000000000000")) == []

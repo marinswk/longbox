@@ -1,0 +1,11 @@
+Alembic migrations for Longbox.
+
+Generate a new revision:
+    uv run alembic revision --autogenerate -m "describe change"
+
+Apply pending migrations:
+    uv run alembic upgrade head
+
+Stamp an existing DB without running anything (used once on first cutover
+from create_all to migrations):
+    uv run alembic stamp head

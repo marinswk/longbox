@@ -1,0 +1,202 @@
+{% extends "_base.html" %}
+{% block title %}{{ series.name }} — Longbox{% endblock %}
+{% block content %}
+
+<section class="panel rounded-3xl p-6">
+  <div class="flex items-baseline justify-between gap-4">
+    <h2 class="min-w-0 flex-1 break-words font-display text-3xl tracking-wide">
+      {{ series.name }}
+    </h2>
+    <a href="/library?series={{ series.name|urlencode }}"
+       class="shrink-0 rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+      Library →
+    </a>
+  </div>
+  {% if publisher %}
+    <p class="mt-1 text-sm text-gray-700">{{ publisher.name }}</p>
+  {% endif %}
+
+  {% if expected_total %}
+  <div class="mt-5">
+    <div class="flex items-baseline justify-between text-sm">
+      <span class="font-semibold">
+        Owned <span class="text-crawl-dark">{{ owned_count }}</span> / {{ expected_total }}
+        {% if missing_count %}
+          <span class="text-gray-500">— missing {{ missing_count }}</span>
+        {% else %}
+          <span class="text-crawl-dark">— complete!</span>
+        {% endif %}
+      </span>
+      <span class="text-xs text-gray-500">{{ progress_pct }}%</span>
+    </div>
+    <div class="mt-2 h-3 w-full overflow-hidden rounded-full border-2 border-black bg-white">
+      <div class="h-full bg-crawl transition-all" style="width: {{ progress_pct }}%"></div>
+    </div>
+  </div>
+  {% else %}
+  <p class="mt-4 text-sm text-gray-600">
+    No issue list pulled yet — link this series to a source below to see
+    what's missing.
+  </p>
+  {% endif %}
+</section>
+
+{% if owned_comics %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <div class="flex items-baseline justify-between">
+    <h3 class="font-display text-2xl tracking-wide">COVERS</h3>
+    <p class="text-xs text-gray-500">{{ owned_comics | length }} owned</p>
+  </div>
+  <ul class="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+    {% for c in owned_comics %}
+    {% set cover = c.cover_url_local or c.cover_url_remote %}
+    <li>
+      <a href="/comic/{{ c.id }}" class="block panel rounded-xl p-1.5 transition hover:-translate-y-0.5"
+         title="{{ c.title or '(untitled)' }}{% if c.issue_number %} #{{ c.issue_number }}{% endif %}">
+        <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+          {% if cover %}
+            <img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />
+          {% else %}
+            <div class="flex h-full items-center justify-center text-[10px] text-gray-500">no cover</div>
+          {% endif %}
+        </div>
+        {% if c.issue_number %}
+          <p class="mt-1 text-center font-mono text-[11px] text-gray-700">#{{ c.issue_number }}</p>
+        {% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if expected_total %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">ISSUES</h3>
+  <ol class="mt-3 space-y-1 text-sm">
+    {% for pair in expected_pairs %}
+      {% set hit = pair.direct or pair.trade %}
+      <li class="flex items-center gap-3 rounded border-2 border-black px-3 py-1.5
+                 {% if hit %}bg-crawl-light/30{% else %}bg-white{% endif %}">
+        <span class="shrink-0 text-base">
+          {% if hit %}✓{% else %}<span class="text-gray-400">○</span>{% endif %}
+        </span>
+        <span class="min-w-0 flex-1 truncate" title="{{ pair.title }}">
+          {% if pair.direct %}
+            <a href="/comic/{{ pair.direct.id }}" class="font-semibold hover:underline">{{ pair.title }}</a>
+          {% elif pair.trade %}
+            <span class="font-semibold text-gray-800">{{ pair.title }}</span>
+            <span class="text-xs text-gray-600">— in
+              <a href="/comic/{{ pair.trade.id }}" class="text-crawl-dark hover:underline">{{ pair.trade.title or '(untitled trade)' }}</a>
+            </span>
+          {% else %}
+            <span class="text-gray-700">{{ pair.title }}</span>
+          {% endif %}
+        </span>
+        {% if pair.direct and pair.direct.cover_date %}
+          <span class="shrink-0 text-xs text-gray-500">{{ pair.direct.cover_date }}</span>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+{% if extras %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">OTHER OWNED</h3>
+  <p class="mt-1 text-xs text-gray-600">
+    Comics in this series that aren't part of the upstream issue list
+    (one-shots, specials, trades, etc.).
+  </p>
+  <ul class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+    {% for c in extras %}
+    {% set cover = c.cover_url_local or c.cover_url_remote %}
+    <li>
+      <a href="/comic/{{ c.id }}" class="block panel rounded-2xl p-2 transition hover:-translate-y-0.5">
+        <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+          {% if cover %}<img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />{% endif %}
+        </div>
+        <p class="mt-1 truncate text-xs font-semibold" title="{{ c.title or '(untitled)' }}">
+          {{ c.title or '(untitled)' }}{% if c.issue_number %} #{{ c.issue_number }}{% endif %}
+        </p>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">REFRESH FROM SOURCE</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Pulls the canonical issue list from the upstream wiki/database to
+    compute what's missing. Re-runnable any time — overwrites the cached
+    list with whatever upstream says.
+  </p>
+  <form class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr_auto]"
+        hx-post="/series/{{ series.id }}/refresh"
+        hx-swap="none">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">Source</span>
+      {% set src = series.source or 'wookieepedia' %}
+      <select name="source"
+              class="mt-1 w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-sm">
+        <option value="wookieepedia" {% if src == 'wookieepedia' %}selected{% endif %}>Wookieepedia</option>
+        <option value="comicvine"    {% if src == 'comicvine' %}selected{% endif %}>ComicVine</option>
+        <option value="metron"       {% if src == 'metron' %}selected{% endif %}>Metron</option>
+      </select>
+    </label>
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">Series ID / article title</span>
+      <input type="text" name="source_id" value="{{ series.source_id or '' }}"
+             placeholder="e.g. Star Wars: Jedi Knights, or 42537 for CV/Metron"
+             class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+    </label>
+    <button type="submit"
+            class="self-end rounded-lg border-4 border-black bg-crawl px-5 py-2 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+      Pull issues
+    </button>
+  </form>
+  {% if series.source %}
+    <p class="mt-2 text-[11px] text-gray-500">
+      Currently linked to <span class="font-mono">{{ series.source }}</span> /
+      <span class="font-mono">{{ series.source_id }}</span>.
+    </p>
+  {% endif %}
+</section>
+
+{% if other_series %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">MERGE INTO ANOTHER SERIES</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Move every comic in <strong>{{ series.name }}</strong> into another
+    series, then delete this one. Useful for collapsing duplicates that
+    came from different sources naming the same series differently. Only
+    publisher / source / expected-issues data missing from the target gets
+    copied over — nothing the target already has is overwritten.
+  </p>
+
+  <form class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]"
+        hx-post="/series/{{ series.id }}/merge"
+        hx-swap="none"
+        hx-confirm="This will reassign every comic in '{{ series.name }}' to the target series and DELETE this series row. Continue?">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">Target series</span>
+      <select name="target_id" required
+              class="mt-1 w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-sm">
+        <option value="">— pick the survivor —</option>
+        {% for s in other_series %}
+          <option value="{{ s.id }}">{{ s.name }}{% if s.id == series.id %} (this){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit"
+            class="self-end rounded-lg border-4 border-black bg-white px-5 py-2 text-sm font-semibold text-red-700 shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+      ⚠ Merge &amp; delete this row
+    </button>
+  </form>
+</section>
+{% endif %}
+
+{% endblock %}

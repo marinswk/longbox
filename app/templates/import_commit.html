@@ -1,0 +1,59 @@
+{% extends "_base.html" %}
+{% block title %}Confirm import — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">CONFIRM &amp; IMPORT</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Step 5 of 5 — review the breakdown below, then commit. Each row gets its
+  own <code>Comic</code> + empty <code>Copy</code>. Cover image downloads
+  run in the background after the response returns.
+</p>
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-xl tracking-wide">SUMMARY</h3>
+  <ul class="mt-3 space-y-1 text-sm">
+    <li>
+      <span class="text-crawl-dark font-display text-2xl tracking-wide">{{ progress.matched + progress.multi }}</span>
+      will be imported with full upstream metadata
+      {% if progress.multi %}<span class="text-gray-600">({{ progress.multi }} pre-picked from multiple hits)</span>{% endif %}.
+    </li>
+    <li>
+      <span class="text-crawl-dark font-display text-2xl tracking-wide">{{ progress.as_is }}</span>
+      will be imported as bare records (no metadata match).
+    </li>
+    <li>
+      <span class="font-display text-2xl tracking-wide">{{ progress.skipped + progress.not_found }}</span>
+      will be skipped ({{ progress.skipped }} explicit · {{ progress.not_found }} not found).
+    </li>
+    {% if progress.errored %}
+    <li class="text-red-800">
+      <span class="font-display text-2xl tracking-wide">{{ progress.errored }}</span>
+      had errors during search — these will be skipped too.
+    </li>
+    {% endif %}
+    {% if progress.pending %}
+    <li class="text-red-800">
+      <strong>Hold up — {{ progress.pending }} row{{ '' if progress.pending == 1 else 's' }} still pending search.</strong>
+      <a href="/admin/import/csv/{{ session.token }}/resolve" class="text-crawl-dark hover:underline">Resolve them first →</a>
+    </li>
+    {% endif %}
+  </ul>
+</section>
+
+<form method="post" action="/admin/import/csv/{{ session.token }}/commit" class="mt-6">
+  <button type="submit"
+          {% if progress.pending %}disabled{% endif %}
+          class="rounded-lg border-4 border-black bg-crawl px-6 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">
+    Commit {{ progress.matched + progress.multi + progress.as_is }} comic{{ '' if (progress.matched + progress.multi + progress.as_is) == 1 else 's' }} →
+  </button>
+  <a href="/admin/import/csv/{{ session.token }}/resolve"
+     class="ml-2 rounded-lg border-2 border-black bg-white px-4 py-2 text-sm font-semibold shadow-[2px_2px_0_0_#000]">
+    ← Back to resolve
+  </a>
+</form>
+
+{% endblock %}

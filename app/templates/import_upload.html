@@ -1,0 +1,78 @@
+{% extends "_base.html" %}
+{% block title %}Import CSV — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<h2 class="mt-2 font-display text-3xl tracking-wide">IMPORT FROM CSV</h2>
+<p class="mt-1 text-sm text-gray-600">
+  Step 1 of 5 — upload a CSV. We'll parse it, then you'll map columns and
+  pick which sources to search.
+</p>
+
+{% if error %}
+<div class="panel mt-6 rounded-2xl border-4 border-red-700 bg-red-50 p-4 text-sm text-red-900">
+  <strong>Couldn't process that file.</strong> {{ error }}
+</div>
+{% endif %}
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <form method="post" action="/admin/import/csv" enctype="multipart/form-data"
+        class="space-y-4">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase">CSV file</span>
+      <input type="file" name="file" accept=".csv,text/csv,text/plain" required
+             class="mt-2 block w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-sm shadow-[2px_2px_0_0_#000]
+                    file:mr-3 file:rounded file:border-0 file:bg-crawl file:px-3 file:py-1 file:text-sm file:font-semibold file:text-black
+                    hover:file:-translate-y-0.5 file:transition" />
+    </label>
+    <button type="submit"
+            class="rounded-lg border-4 border-black bg-crawl px-6 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      Upload &amp; parse →
+    </button>
+  </form>
+</section>
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-xl tracking-wide">DON'T HAVE A CSV YET?</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Grab a starter file with the canonical column layout. Fill it in your
+    spreadsheet, save as CSV, then come back and upload — every column
+    auto-maps onto the right Longbox field.
+  </p>
+  <div class="mt-3 flex flex-wrap gap-3">
+    <a href="/admin/import/csv/template" download
+       class="rounded-lg border-4 border-black bg-paper px-5 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      ⬇ Download empty template
+    </a>
+    <a href="/admin/import/csv/export-library" download
+       class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5"
+       title="Export your current library as a re-importable CSV using the same canonical header.">
+      ⬇ Export library as CSV
+    </a>
+  </div>
+</section>
+
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-xl tracking-wide">WHAT'S A GOOD CSV LOOK LIKE?</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Anything with a header row and one comic per row. Common columns Longbox
+    can map to:
+  </p>
+  <ul class="mt-2 list-inside list-disc text-sm text-gray-700">
+    <li><span class="font-mono">Series</span> &amp; <span class="font-mono">Title</span> — used to search across sources.</li>
+    <li><span class="font-mono">Issue Number</span>, <span class="font-mono">Series Year</span>, <span class="font-mono">Publisher</span>, <span class="font-mono">Type</span> (TPB / HC / OMNIBUS / SINGLE_ISSUE / OGN).</li>
+    <li><span class="font-mono">ISBN-13</span> or <span class="font-mono">UPC</span> if you have them — best chance of an exact match.</li>
+    <li><span class="font-mono">Fandom</span> — auto-tagged on each comic.</li>
+    <li><span class="font-mono">Collected Issues</span>, <span class="font-mono">Variant</span> — saved as-is.</li>
+  </ul>
+  <p class="mt-3 text-xs text-gray-600">
+    Other columns are fine — you'll get a chance to pick which ones map to which
+    field on the next step. Empty rows and section-header rows (cells with only
+    a fandom name) are skipped automatically.
+  </p>
+</section>
+
+{% endblock %}

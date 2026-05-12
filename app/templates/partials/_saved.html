@@ -1,0 +1,27 @@
+<div class="panel relative overflow-visible rounded-3xl bg-ink p-6 text-paper">
+  {# POW! sticker — rotated yellow circle bursting out of the panel.
+     Animated in via the `pow-in` keyframe defined in _base.html. #}
+  <span class="pointer-events-none absolute -right-3 -top-4 z-20 inline-flex h-20 w-20 items-center justify-center
+               rounded-full border-[3px] border-black bg-crawl text-black shadow-[3px_3px_0_0_#000]
+               animate-pow-in">
+    <span class="font-display text-2xl tracking-wide leading-none">POW!</span>
+  </span>
+
+  <h3 class="font-display text-3xl tracking-wide text-crawl drop-shadow-[2px_2px_0_rgba(0,0,0,1)]">
+    ADDED TO COLLECTION
+  </h3>
+  <p class="mt-2 text-sm font-semibold">
+    {{ comic.title or '(untitled)' }}{% if comic.issue_number %} #{{ comic.issue_number }}{% endif %}
+    — you now own <strong class="text-crawl">{{ copies }}</strong> cop{{ 'y' if copies == 1 else 'ies' }}.
+  </p>
+  <div class="mt-4 flex flex-wrap gap-3">
+    <a href="/add"
+       class="rounded-lg border-4 border-black bg-crawl px-4 py-2 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+      Add another
+    </a>
+    <a href="/comic/{{ comic.id }}"
+       class="rounded-lg border-4 border-black bg-paper px-4 py-2 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5">
+      Open detail →
+    </a>
+  </div>
+</div>

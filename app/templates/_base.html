@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0e1a" />
+    <title>{% block title %}Longbox{% endblock %}</title>
+
+    {# Web App Manifest — drives the install prompt on Chromium-based
+       browsers and the "Add to Home Screen" experience on iOS Safari. #}
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    {# Favicon + iOS home-screen icon. SVG is honored by every modern
+       engine (incl. iOS 13+); shipping a single asset keeps the repo
+       free of binary blobs. #}
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/static/icons/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Longbox" />
+    <meta name="application-name" content="Longbox" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script>
+      // "Crawl" palette — Star-Wars-leaning without leaning on imagery.
+      //   crawl     opening-crawl yellow (Lucasfilm-licensed #FFE81F),
+      //             used for primary fills + KAPOW accents.
+      //   crawl-dark a darker goldenrod, the only yellow shade that's
+      //             readable on light backgrounds (links, headings).
+      //   ink       deep navy/black for the header strip + dark CTAs.
+      //   paper     warm off-white body backdrop (with halftone overlay).
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              crawl: { DEFAULT: "#FFE81F", dark: "#a17900", light: "#fff389" },
+              ink:   { DEFAULT: "#0a0e1a", soft: "#1d2335" },
+              paper: { DEFAULT: "#faf6ec", warm: "#f1ead6" },
+            },
+            fontFamily: { display: ["Bangers", "system-ui", "sans-serif"] },
+            keyframes: {
+              "pow-in": {
+                "0%":   { transform: "rotate(-15deg) scale(0)",   opacity: "0" },
+                "60%":  { transform: "rotate(-15deg) scale(1.2)", opacity: "1" },
+                "100%": { transform: "rotate(-15deg) scale(1)",   opacity: "1" },
+              },
+              "stamp-bob": {
+                "0%, 100%": { transform: "translateY(0) rotate(-15deg)" },
+                "50%":      { transform: "translateY(-3px) rotate(-13deg)" },
+              },
+            },
+            animation: {
+              "pow-in": "pow-in 350ms cubic-bezier(.25,.95,.45,1.4) both",
+              "stamp-bob": "stamp-bob 2.4s ease-in-out infinite",
+            },
+          },
+        },
+      };
+    </script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@400;600;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", system-ui, sans-serif;
+        background-color: #faf6ec;
+        /* Subtle halftone — two layers of small dots, very light, gives the
+           page a printed-paper feel without overwhelming. */
+        background-image:
+          radial-gradient(circle at 1px 1px, rgba(0,0,0,0.07) 1px, transparent 0);
+        background-size: 18px 18px;
+      }
+      .panel {
+        border: 4px solid #000;
+        box-shadow: 6px 6px 0 0 #000;
+        background: #fff;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      dd { min-width: 0; overflow-wrap: anywhere; }
+      select[multiple] { font-family: inherit; }
+
+      /* Header gets a starfield: tiny faint dots over the deep-navy bg.
+         Pure CSS, no images. */
+      .header-stars {
+        background-color: #0a0e1a;
+        background-image:
+          radial-gradient(1px 1px at 20% 30%,  rgba(255,232,31,0.6) 50%, transparent 100%),
+          radial-gradient(1px 1px at 70% 80%,  rgba(255,255,255,0.5) 50%, transparent 100%),
+          radial-gradient(1px 1px at 40% 60%,  rgba(255,255,255,0.4) 50%, transparent 100%),
+          radial-gradient(1px 1px at 90% 20%,  rgba(255,232,31,0.4) 50%, transparent 100%),
+          radial-gradient(1px 1px at 10% 80%,  rgba(255,255,255,0.5) 50%, transparent 100%),
+          radial-gradient(1px 1px at 60% 10%,  rgba(255,255,255,0.4) 50%, transparent 100%);
+        background-size: 200px 100px;
+        background-repeat: repeat;
+      }
+
+      /* Bangers is huge — scale display-font headings down on phones so
+         they don't wrap awkwardly on 360px-wide viewports. Applied as a
+         single global rule rather than editing 20+ templates to add
+         responsive variants individually. */
+      @media (max-width: 640px) {
+        .font-display.text-3xl { font-size: 1.5rem;   line-height: 1.75rem; }
+        .font-display.text-4xl { font-size: 1.875rem; line-height: 2.25rem; }
+        .font-display.text-5xl { font-size: 2.25rem;  line-height: 2.5rem; }
+        .font-display.text-6xl { font-size: 2.5rem;   line-height: 2.75rem; }
+        .font-display.text-7xl { font-size: 3rem;     line-height: 3rem; }
+      }
+
+      /* Mobile touch-target safety: ensure interactive elements are at
+         least 44px tall on small screens (iOS HIG / Android Material
+         minimum). Excludes elements opted out via `.lb-mini-tap` for
+         the cases where dense layout is more useful than huge buttons
+         (e.g. chip-style facet checkboxes inside a scrollable list). */
+      @media (max-width: 640px) {
+        button:not(.lb-mini-tap), [role="button"]:not(.lb-mini-tap),
+        a.btn, input[type="submit"], select {
+          min-height: 44px;
+        }
+        /* iOS Safari zooms in if the focused input's font-size is < 16px.
+           Bump every form control so the page stays put on focus. */
+        input, select, textarea {
+          font-size: 16px;
+        }
+      }
+
+      /* Honor safe-area-inset on notched phones for fixed bottom bars.
+         Tailwind doesn't ship a built-in for this; the utility is small. */
+      .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+      .pt-safe { padding-top: max(env(safe-area-inset-top), 0px); }
+      .pl-safe { padding-left: max(env(safe-area-inset-left), 0px); }
+      .pr-safe { padding-right: max(env(safe-area-inset-right), 0px); }
+      .px-safe {
+        padding-left: max(env(safe-area-inset-left), 0px);
+        padding-right: max(env(safe-area-inset-right), 0px);
+      }
+
+      /* Mobile-nav drawer transitions. Backed by a checkbox so it works
+         without JS — the menu opens via label[for=lb-nav-toggle]. */
+      #lb-nav-toggle:checked ~ .lb-nav-drawer { transform: translateX(0); }
+      #lb-nav-toggle:checked ~ .lb-nav-backdrop {
+        opacity: 1; pointer-events: auto;
+      }
+
+      /* Responsive table pattern: a `<table class="lb-stack-mobile">`
+         turns each row into a card on phones with the column name
+         prepended to every cell via its `data-label` attribute. */
+      @media (max-width: 640px) {
+        table.lb-stack-mobile,
+        table.lb-stack-mobile tbody { display: block; }
+        table.lb-stack-mobile thead { display: none; }
+        table.lb-stack-mobile tr {
+          display: block;
+          border: 2px solid #000;
+          border-radius: 0.5rem;
+          background: #fff;
+          padding: 0.5rem 0.75rem;
+          margin-bottom: 0.5rem;
+        }
+        table.lb-stack-mobile td { display: block; padding: 0.125rem 0; border: 0; }
+        table.lb-stack-mobile td[data-label]::before {
+          content: attr(data-label) ": ";
+          color: #6b7280;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          margin-right: 0.25rem;
+        }
+      }
+
+      /* `<details class="lb-mobile-disclosure">` collapses its content
+         behind a summary on mobile, but on lg+ the content always
+         shows (the summary is `lg:hidden`). Used on the comic-detail
+         sidebar to keep the action buttons behind one tap on phones
+         while preserving the desktop sidebar layout. */
+      details.lb-mobile-disclosure[open] > summary > .lb-chev { transform: rotate(90deg); }
+      @media (min-width: 1024px) {
+        details.lb-mobile-disclosure > * { display: block; }
+      }
+
+      /* Filter drawer — used on /library and /series. On lg+ the aside
+         renders inline inside the grid (its `lg:static lg:translate-y-0`
+         classes win); on mobile it slides up from the bottom on demand. */
+      .lb-filters-drawer {
+        transform: translateY(100%);
+        transition: transform .25s ease-out;
+      }
+      .lb-filters-drawer.open { transform: translateY(0); }
+      .lb-filters-backdrop {
+        opacity: 0; pointer-events: none;
+        transition: opacity .2s ease-out;
+      }
+      .lb-filters-backdrop.open { opacity: 1; pointer-events: auto; }
+      @media (min-width: 1024px) {
+        .lb-filters-drawer,
+        .lb-filters-drawer.open { transform: none; }
+        .lb-filters-backdrop { display: none !important; }
+      }
+    </style>
+  </head>
+  <body class="min-h-screen text-black px-safe">
+    {# Hidden checkbox drives the mobile nav drawer. Sitting outside the
+       header so the label can flip it without JS. #}
+    <input type="checkbox" id="lb-nav-toggle" class="hidden peer" />
+
+    <header class="header-stars border-b-4 border-black pt-safe">
+      <div class="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4">
+        <a href="/" class="font-display text-2xl tracking-wide text-crawl drop-shadow-[2px_2px_0_rgba(0,0,0,1)] sm:text-3xl">
+          LONGBOX
+        </a>
+
+        <form action="/search" method="get"
+              class="relative ml-auto hidden flex-1 sm:block sm:max-w-md">
+          <input type="text" name="q" placeholder="Search title, creator, arc, ISBN…"
+                 autocomplete="off"
+                 hx-get="/search/suggest" hx-trigger="keyup changed delay:200ms"
+                 hx-target="#search-suggest" hx-swap="innerHTML"
+                 class="w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+          <div id="search-suggest"></div>
+        </form>
+
+        {# Desktop nav: visible on sm+. Same links the drawer carries. #}
+        <nav class="hidden text-sm font-semibold text-paper sm:flex sm:flex-wrap sm:gap-x-4 sm:gap-y-1">
+          <a class="hover:text-crawl" href="/library">Library</a>
+          <a class="hover:text-crawl" href="/series">Series</a>
+          <a class="hover:text-crawl" href="/tags">Tags</a>
+          <a class="hover:text-crawl" href="/duplicates">Dupes</a>
+          <a class="hover:text-crawl" href="/stats">Stats</a>
+          <a class="hover:text-crawl" href="/reading-log">Log</a>
+          <a class="hover:text-crawl" href="/add">Add</a>
+          <a class="hover:text-crawl" href="/admin">Admin</a>
+        </nav>
+
+        {# Mobile hamburger. The label flips #lb-nav-toggle which the
+           drawer animates from. Click area is a comfortable 44px. #}
+        <label for="lb-nav-toggle"
+               aria-label="Open menu"
+               class="ml-auto inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border-2 border-paper text-paper sm:hidden">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+        </label>
+      </div>
+    </header>
+
+    {# Mobile nav drawer + backdrop. Sit below body in DOM so the
+       checkbox above can target them via the sibling selector. #}
+    <label for="lb-nav-toggle"
+           class="lb-nav-backdrop fixed inset-0 z-40 bg-black/60 opacity-0 pointer-events-none transition-opacity sm:hidden"
+           aria-hidden="true"></label>
+    <aside class="lb-nav-drawer fixed inset-y-0 right-0 z-50 flex w-72 max-w-full translate-x-full flex-col bg-ink text-paper transition-transform duration-200 ease-out sm:hidden pt-safe pb-safe pr-safe"
+           role="dialog" aria-label="Site menu">
+      <div class="flex items-center justify-between border-b-2 border-paper/30 px-4 py-3">
+        <p class="font-display text-2xl tracking-wide text-crawl">MENU</p>
+        <label for="lb-nav-toggle" aria-label="Close menu"
+               class="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border-2 border-paper text-paper">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+        </label>
+      </div>
+      <form action="/search" method="get" class="border-b-2 border-paper/30 p-4">
+        <input type="text" name="q" placeholder="🔎 Search…"
+               class="w-full rounded-lg border-2 border-black bg-white px-3 py-2 text-base text-black focus:outline-none focus:ring-2 focus:ring-crawl" />
+      </form>
+      <nav class="flex-1 overflow-y-auto p-2 text-base font-semibold">
+        {% for href, label in [
+          ('/library',     'Library'),
+          ('/series',      'Series'),
+          ('/tags',        'Tags'),
+          ('/duplicates',  'Dupes'),
+          ('/stats',       'Stats'),
+          ('/reading-log', 'Log'),
+          ('/add',         'Add'),
+          ('/admin',       'Admin'),
+        ] %}
+          <a href="{{ href }}"
+             class="block rounded-lg px-3 py-3 hover:bg-paper/10">
+            {{ label }}
+          </a>
+        {% endfor %}
+      </nav>
+    </aside>
+
+    <main class="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+      {% block content %}{% endblock %}
+    </main>
+
+    {# Register the service worker. Wrapped in `'serviceWorker' in
+       navigator` so older browsers + private/incognito modes degrade
+       silently. The `beforeinstallprompt` capture lets the install
+       prompt fire from a button anywhere on the site by listening for
+       `window.lbInstall.show()`. #}
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+      }
+      // Capture the install prompt so it can be shown from any "📱 Install
+      // Longbox" button in the app. Chrome / Edge / Brave only.
+      window.lbDeferredPrompt = null;
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        window.lbDeferredPrompt = e;
+        document.querySelectorAll('[data-lb-install]').forEach((el) => {
+          el.hidden = false;
+        });
+      });
+      window.lbInstall = {
+        show: async () => {
+          const p = window.lbDeferredPrompt;
+          if (!p) return;
+          p.prompt();
+          await p.userChoice;
+          window.lbDeferredPrompt = null;
+          document.querySelectorAll('[data-lb-install]').forEach((el) => {
+            el.hidden = true;
+          });
+        },
+      };
+    </script>
+  </body>
+</html>

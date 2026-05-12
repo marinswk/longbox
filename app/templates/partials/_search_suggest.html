@@ -1,0 +1,25 @@
+{% if items %}
+<ul class="absolute right-0 top-full z-20 mt-1 w-80 max-w-[90vw] overflow-hidden rounded-lg border-2 border-black bg-white text-sm shadow-[4px_4px_0_0_#000]">
+  {% for it in items %}
+    {% set comic = it.comic %}
+    <li class="border-b border-gray-200 last:border-b-0">
+      <a href="/comic/{{ comic.id }}" class="flex items-center gap-2 px-3 py-2 hover:bg-crawl-light/30">
+        <span class="min-w-0 flex-1">
+          <span class="block truncate font-semibold" title="{{ comic.title or (it.series.name if it.series else '(untitled)') }}">
+            {{ comic.title or it.series.name if it.series else '(untitled)' }}{% if comic.issue_number %} #{{ comic.issue_number }}{% endif %}
+          </span>
+          {% if it.series and it.series.name != comic.title %}
+            <span class="block truncate text-xs text-gray-600">{{ it.series.name }}</span>
+          {% endif %}
+        </span>
+      </a>
+    </li>
+  {% endfor %}
+  <li class="border-t-2 border-black bg-gray-50">
+    <a href="/search?q={{ q|urlencode }}"
+       class="block px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-crawl-dark hover:bg-crawl-light/30">
+      See all results →
+    </a>
+  </li>
+</ul>
+{% endif %}

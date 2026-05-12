@@ -1,0 +1,60 @@
+{% extends "_base.html" %}
+{% block title %}Reading log — Longbox{% endblock %}
+{% block content %}
+
+<h2 class="font-display text-3xl tracking-wide">READING LOG</h2>
+<p class="mt-1 text-sm text-gray-600">
+  {% if total %}
+    {{ total }} read{{ '' if total == 1 else 's' }} recorded, newest first.
+  {% else %}
+    Nothing logged yet.
+  {% endif %}
+</p>
+
+{% if total == 0 %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <p class="text-sm">
+    To log a read, open any comic, edit its copy, set
+    <span class="font-semibold">Read status = read</span> and pick a
+    <span class="font-semibold">Date read</span>.
+    Reads show up here grouped by month and feed the
+    <a href="/stats" class="text-crawl-dark hover:underline">stats page</a>.
+  </p>
+</section>
+{% else %}
+{% for m in months %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <div class="flex items-baseline justify-between">
+    <h3 class="font-display text-2xl tracking-wide">{{ m.key }}</h3>
+    <p class="text-xs text-gray-500">{{ m.count }} read{{ '' if m.count == 1 else 's' }}</p>
+  </div>
+  <ul class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+    {% for it in m.entries %}
+    {% set comic = it.comic %}
+    {% set cover = comic.cover_url_local or comic.cover_url_remote %}
+    <li>
+      <a href="/comic/{{ comic.id }}" class="block panel rounded-2xl p-2 transition hover:-translate-y-0.5">
+        <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+          {% if cover %}
+            <img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />
+          {% endif %}
+        </div>
+        <p class="mt-1 truncate text-xs font-semibold"
+           title="{{ comic.title or (it.series.name if it.series else '(untitled)') }}">
+          {{ comic.title or (it.series.name if it.series else '(untitled)') }}
+        </p>
+        {% if it.series %}
+          <p class="truncate text-[11px] text-gray-600">{{ it.series.name }}</p>
+        {% endif %}
+        <p class="mt-1 text-[11px] text-gray-500">
+          read {{ it.copy.date_read }}
+        </p>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endif %}
+
+{% endblock %}

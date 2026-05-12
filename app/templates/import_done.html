@@ -1,0 +1,52 @@
+{% extends "_base.html" %}
+{% block title %}Import complete — Longbox{% endblock %}
+{% block content %}
+
+<p class="text-xs">
+  <a href="/admin#import" class="text-crawl-dark hover:underline">← Back to Admin</a>
+</p>
+
+<section class="panel relative mt-2 overflow-visible rounded-3xl bg-ink p-8">
+  <h2 class="font-display text-5xl tracking-wide text-crawl drop-shadow-[3px_3px_0_rgba(0,0,0,1)]">
+    DONE!
+  </h2>
+  <p class="mt-3 text-lg font-semibold text-paper">
+    <span class="text-crawl">{{ summary.committed }}</span> comic{{ '' if summary.committed == 1 else 's' }} added.
+    {% if summary.skipped %}
+      <span class="text-paper/70">· {{ summary.skipped }} skipped.</span>
+    {% endif %}
+    {% if summary.errored %}
+      <span class="text-red-300">· {{ summary.errored }} errored.</span>
+    {% endif %}
+  </p>
+  <div class="mt-6 flex flex-wrap gap-3">
+    <a href="/library"
+       class="rounded-full border-4 border-black bg-crawl px-6 py-3 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      Browse library →
+    </a>
+    <a href="/admin/import/csv"
+       class="rounded-full border-4 border-black bg-paper px-6 py-3 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      Run another import
+    </a>
+  </div>
+</section>
+
+{% if summary.errors %}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-xl tracking-wide">ERRORS</h3>
+  <p class="mt-1 text-sm text-gray-700">
+    These rows hit an exception during commit and were left uncommitted.
+    Re-running this import session will retry only the un-committed rows.
+  </p>
+  <ul class="mt-3 space-y-1 text-sm">
+    {% for row_index, msg in summary.errors %}
+    <li>
+      <span class="font-mono text-xs text-gray-500">row #{{ row_index + 1 }}</span> —
+      <span class="text-red-900">{{ msg }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,248 @@
+{% extends "_base.html" %}
+{% block title %}Stats — Longbox{% endblock %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+
+<h2 class="font-display text-3xl tracking-wide">YOUR LONGBOX BY THE NUMBERS</h2>
+<p class="mt-1 text-xs text-gray-600">Tip: click a donut slice to jump to that filter in the library.</p>
+
+{# ─────────────────────  Section 1: KPI strip  ───────────────────── #}
+<section class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+  {% set t = data.totals %}
+  {% set kpis = [
+    ('Comics', t.comics),
+    ('Copies', t.copies),
+    ('Series', t.series),
+    ('Publishers', t.publishers),
+  ] %}
+  {% for label, value in kpis %}
+  <div class="panel rounded-2xl p-4">
+    <p class="text-xs font-semibold uppercase text-gray-600">{{ label }}</p>
+    <p class="font-display text-3xl tracking-wide text-crawl-dark">{{ value }}</p>
+  </div>
+  {% endfor %}
+</section>
+
+{# ─────────────────────  Section 2: Composition  ───────────────────── #}
+{% if data.present.format or data.present.canon or data.present.era or data.present.fandom %}
+<h3 class="mt-8 font-display text-2xl tracking-wide">COMPOSITION</h3>
+<section class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+  {% if data.present.fandom %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">FANDOM</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-fandom"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.fandoms | sum(attribute='count') }} comics
+    </p>
+  </div>
+  {% endif %}
+  {% if data.present.format %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">FORMAT</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-format"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.formats | sum(attribute='count') }} comics
+    </p>
+  </div>
+  {% endif %}
+  {% if data.present.canon %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">CONTINUITY</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-canon"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.canons | sum(attribute='count') }} comics
+    </p>
+  </div>
+  {% endif %}
+  {% if data.present.era %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">ERA</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-era"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.eras | sum(attribute='count') }} comics
+    </p>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ─────────────────────  Section 3: Physical copies  ───────────────────── #}
+<h3 class="mt-8 font-display text-2xl tracking-wide">PHYSICAL COPIES</h3>
+<section class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 {% if data.present.storage %}lg:grid-cols-3{% endif %}">
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">READ STATUS</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-read"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.read_status | sum(attribute='count') }} copies
+    </p>
+  </div>
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">CONDITION</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-condition"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.conditions | sum(attribute='count') }} copies
+    </p>
+  </div>
+  {% if data.present.storage %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">STORAGE</h4>
+    <div class="relative mt-3 h-64"><canvas id="chart-storage"></canvas></div>
+    <p class="mt-2 text-center text-[11px] text-gray-600">
+      {{ data.storage | sum(attribute='count') }} copies
+    </p>
+  </div>
+  {% endif %}
+</section>
+
+{# ─────────────────────  Section 4: Activity  ───────────────────── #}
+<h3 class="mt-8 font-display text-2xl tracking-wide">ACTIVITY (last 12 months)</h3>
+<section class="mt-3 grid grid-cols-1 gap-4 {% if data.present.read_pace %}lg:grid-cols-2{% endif %}">
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">ADDED PER MONTH</h4>
+    <div class="relative mt-3 h-56"><canvas id="chart-added"></canvas></div>
+  </div>
+  {% if data.present.read_pace %}
+  <div class="panel rounded-2xl p-4">
+    <h4 class="font-display text-xl tracking-wide">READ PER MONTH</h4>
+    <div class="relative mt-3 h-56"><canvas id="chart-readpace"></canvas></div>
+  </div>
+  {% endif %}
+</section>
+
+{# ─────────────────────  Section 5: Series progress + highlights  ──────── #}
+<section class="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+  <div class="panel rounded-2xl p-4">
+    <h3 class="font-display text-2xl tracking-wide">SERIES PROGRESS</h3>
+    {% set sp = data.series_progress %}
+    <p class="mt-3 text-sm">
+      <span class="font-display text-2xl tracking-wide text-crawl-dark">{{ sp.complete }}</span> complete
+      ·
+      <span class="font-display text-2xl tracking-wide text-crawl-dark">{{ sp.in_progress }}</span> in progress
+      ·
+      <span class="font-display text-2xl tracking-wide text-crawl-dark">{{ sp.untracked }}</span> untracked
+    </p>
+    <p class="mt-1 text-xs text-gray-600">
+      Across {{ sp.total }} series total. "Untracked" series have no expected-issues list pulled yet.
+    </p>
+  </div>
+
+  <div class="panel rounded-2xl p-4">
+    <h3 class="font-display text-2xl tracking-wide">HIGHLIGHTS</h3>
+    {% set h = data.highlights %}
+    <ul class="mt-3 space-y-1.5 text-sm">
+      <li>
+        <span class="font-semibold">Read this year:</span>
+        <span class="text-crawl-dark font-semibold">{{ h.read_this_year }}</span>
+        cop{{ 'y' if h.read_this_year == 1 else 'ies' }}.
+      </li>
+      {% if h.heaviest_month %}
+      <li>
+        <span class="font-semibold">Heaviest add-month:</span>
+        {{ h.heaviest_month.month }}
+        (<span class="text-crawl-dark font-semibold">{{ h.heaviest_month.count }}</span>
+        comic{{ '' if h.heaviest_month.count == 1 else 's' }}).
+      </li>
+      {% endif %}
+      {% if h.oldest %}
+      <li>
+        <span class="font-semibold">Oldest comic:</span>
+        <a class="text-crawl-dark hover:underline" href="/comic/{{ h.oldest.id }}">
+          {{ h.oldest.title or '(untitled)' }}{% if h.oldest.issue_number %} #{{ h.oldest.issue_number }}{% endif %}
+        </a>
+        — {{ h.oldest.cover_date }}
+      </li>
+      {% endif %}
+      {% if h.most_recent %}
+      <li>
+        <span class="font-semibold">Most recent:</span>
+        <a class="text-crawl-dark hover:underline" href="/comic/{{ h.most_recent.id }}">
+          {{ h.most_recent.title or '(untitled)' }}{% if h.most_recent.issue_number %} #{{ h.most_recent.issue_number }}{% endif %}
+        </a>
+        — {{ h.most_recent.cover_date }}
+      </li>
+      {% endif %}
+      {% if h.most_tagged %}
+      <li>
+        <span class="font-semibold">Most-tagged:</span>
+        <a class="text-crawl-dark hover:underline" href="/comic/{{ h.most_tagged.id }}">
+          {{ h.most_tagged.title or '(untitled)' }}{% if h.most_tagged.issue_number %} #{{ h.most_tagged.issue_number }}{% endif %}
+        </a>
+        (<span class="text-crawl-dark font-semibold">{{ h.most_tagged.tag_count }}</span> tags)
+      </li>
+      {% endif %}
+    </ul>
+  </div>
+</section>
+
+<script id="stats-data" type="application/json">{{ data | tojson }}</script>
+<script>
+  (function () {
+    const data = JSON.parse(document.getElementById('stats-data').textContent);
+    const CRAWL = '#FFE81F';
+    const PALETTE = ['#FFE81F', '#a17900', '#fff389', '#0a0e1a', '#6b7280', '#d1d5db'];
+
+    const baseOpts = () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0 } } },
+    });
+
+    const bar = (id, labels, values) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      new Chart(el, {
+        type: 'bar',
+        data: { labels, datasets: [{ data: values, backgroundColor: CRAWL, borderColor: '#000', borderWidth: 2 }] },
+        options: baseOpts(),
+      });
+    };
+
+    // Slices that point at a library filter become navigable. `param` is
+    // the query-param key on /library; the slice label is the value.
+    // Sentinel labels like "(unset)" and "unknown" aren't selectable since
+    // the library doesn't have a "missing-value" filter.
+    const NON_FILTER_LABELS = new Set(['(unset)', 'unknown', 'unspecified']);
+    const donut = (id, labels, values, filterParam = null) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const chart = new Chart(el, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data: values, backgroundColor: PALETTE, borderColor: '#000', borderWidth: 2 }] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } },
+          onClick: (evt, items) => {
+            if (!filterParam || !items.length) return;
+            const label = labels[items[0].index];
+            if (NON_FILTER_LABELS.has(label)) return;
+            window.location.href = `/library?${filterParam}=${encodeURIComponent(label)}`;
+          },
+          onHover: (evt, items) => {
+            if (!filterParam) return;
+            evt.native.target.style.cursor =
+              items.length && !NON_FILTER_LABELS.has(labels[items[0].index]) ? 'pointer' : 'default';
+          },
+        },
+      });
+      return chart;
+    };
+
+    // Composition — slices link to /library filters.
+    if (data.present.fandom) donut('chart-fandom', data.fandoms.map(d => d.label), data.fandoms.map(d => d.count), 'fandom');
+    if (data.present.format) donut('chart-format', data.formats.map(d => d.label), data.formats.map(d => d.count), 'format');
+    if (data.present.canon)  donut('chart-canon',  data.canons.map(d => d.label),  data.canons.map(d => d.count),  'canon');
+    if (data.present.era)    donut('chart-era',    data.eras.map(d => d.label),    data.eras.map(d => d.count),    'era');
+
+    // Physical — read_status + storage link, condition has no library filter.
+    donut('chart-read', data.read_status.map(d => d.status), data.read_status.map(d => d.count), 'read_status');
+    donut('chart-condition', data.conditions.map(d => d.condition), data.conditions.map(d => d.count));
+    if (data.present.storage) donut('chart-storage', data.storage.map(d => d.label), data.storage.map(d => d.count), 'storage');
+
+    // Activity
+    bar('chart-added', data.added_per_month.map(d => d.month), data.added_per_month.map(d => d.count));
+    if (data.present.read_pace) bar('chart-readpace', data.read_per_month.map(d => d.month), data.read_per_month.map(d => d.count));
+  })();
+</script>
+{% endblock %}

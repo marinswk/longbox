@@ -1,0 +1,47 @@
+{# Progress strip used inside the sticky footer. The id wrapper lives in
+   the parent template / OOB swap, not here, so this partial can be
+   included into either context without producing duplicate ids. #}
+<div class="flex flex-wrap items-center gap-3 text-sm">
+  <p class="font-display text-lg tracking-wide">
+    <span class="text-crawl-dark">{{ progress.ready }}</span> / {{ progress.total }} ready
+  </p>
+  <div class="flex flex-wrap gap-2 text-[11px]">
+    <span class="rounded-full border-2 border-black bg-crawl/30 px-2 py-0.5 font-semibold">{{ progress.matched }} matched</span>
+    {% if progress.multi %}<span class="rounded-full border-2 border-black bg-crawl-light/50 px-2 py-0.5 font-semibold" title="Pre-picked top candidate; click any other hit on the row to override.">{{ progress.multi }} pre-picked</span>{% endif %}
+    {% if progress.not_found %}<span class="rounded-full border-2 border-black bg-red-100 px-2 py-0.5 font-semibold text-red-800">{{ progress.not_found }} not found</span>{% endif %}
+    {% if progress.as_is %}<span class="rounded-full border-2 border-black bg-yellow-100 px-2 py-0.5 font-semibold">{{ progress.as_is }} as-is</span>{% endif %}
+    {% if progress.skipped %}<span class="rounded-full border-2 border-black bg-gray-200 px-2 py-0.5 font-semibold">{{ progress.skipped }} skipped</span>{% endif %}
+    {% if progress.errored %}<span class="rounded-full border-2 border-black bg-red-200 px-2 py-0.5 font-semibold text-red-900">{{ progress.errored }} errored</span>{% endif %}
+    {% if progress.pending %}<span class="rounded-full border-2 border-black bg-paper-warm px-2 py-0.5 font-semibold">{{ progress.pending }} pending</span>{% endif %}
+  </div>
+  {# When some cards are still pending (lazy-loaded), give the user a
+     way to flush them in one click instead of having to scroll through
+     a 200-row page to trigger every `hx-trigger="revealed"`. #}
+  {% if progress.pending %}
+  <button type="button" id="lb-search-remaining"
+          onclick="lbFlushPending && lbFlushPending()"
+          class="ml-auto rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:-translate-y-0.5"
+          title="Run the upstream search for every row that's still in 'pending' state.">
+    🔄 search {{ progress.pending }} remaining
+  </button>
+  {% endif %}
+  <form method="post"
+        action="/admin/import/csv/{{ session.token }}/cancel"
+        onsubmit="return confirm('Abort this import? Pending searches stop and the wizard goes away. The library itself is untouched.')"
+        class="{% if not progress.pending %}ml-auto{% endif %}">
+    <button type="submit"
+            class="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-xs font-semibold text-red-700 shadow-[2px_2px_0_0_#000] hover:-translate-y-0.5">
+      ✕ cancel import
+    </button>
+  </form>
+  {% set blocked = progress.pending %}
+  <a href="{% if blocked %}#{% else %}/admin/import/csv/{{ session.token }}/commit{% endif %}"
+     {% if blocked %}aria-disabled="true" title="Wait for the {{ progress.pending }} pending search{{ '' if progress.pending == 1 else 'es' }} to finish (or hit '🔄 search remaining' to fire them all now)."{% endif %}
+     class="rounded-lg border-4 border-black bg-crawl px-4 py-1.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] {% if blocked %}pointer-events-none opacity-50{% else %}hover:-translate-y-0.5{% endif %}">
+    {% if blocked -%}
+      Waiting on {{ progress.pending }} search{{ '' if progress.pending == 1 else 'es' }}…
+    {%- else -%}
+      Import {{ progress.ready }} comic{{ '' if progress.ready == 1 else 's' }} →
+    {%- endif %}
+  </a>
+</div>

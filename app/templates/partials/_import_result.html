@@ -1,0 +1,14 @@
+<div class="rounded-lg border-2 border-crawl bg-crawl-light/30 p-3 text-sm">
+  <p class="font-semibold">POW! Imported {{ total }} record{{ '' if total == 1 else 's' }}.</p>
+  <ul class="mt-1 space-y-0.5 text-xs text-gray-700">
+    {% for entity, count in summary.items() %}
+      {% if count %}<li><span class="font-mono">{{ entity }}</span>: {{ count }}</li>{% endif %}
+    {% endfor %}
+    {% if covers_restored %}
+      <li><span class="font-mono">cover files</span>: {{ covers_restored }}</li>
+    {% endif %}
+  </ul>
+  <p class="mt-2 text-xs text-gray-600">
+    <a href="/library" class="font-semibold text-crawl-dark hover:underline">→ Open library</a>
+  </p>
+</div>

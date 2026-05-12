@@ -1,0 +1,30 @@
+{% extends "_base.html" %}
+{% block title %}{{ status }} — Longbox{% endblock %}
+{% block content %}
+
+<section class="panel relative overflow-visible rounded-3xl bg-ink p-8 sm:p-12">
+  <p class="font-display text-7xl tracking-wide text-crawl drop-shadow-[3px_3px_0_rgba(0,0,0,1)]">
+    {{ status }}
+  </p>
+  <h1 class="mt-2 font-display text-3xl tracking-wide text-paper sm:text-4xl">
+    {{ headline }}
+  </h1>
+  <p class="mt-3 max-w-xl text-sm text-paper/80">
+    {{ blurb }}
+  </p>
+  {% if detail %}
+  <pre class="mt-4 max-w-xl overflow-x-auto rounded-lg border-2 border-black bg-paper-warm/20 p-3 text-xs text-paper">{{ detail }}</pre>
+  {% endif %}
+  <div class="mt-6 flex flex-wrap gap-3">
+    <a href="/"
+       class="inline-block rounded-full border-4 border-black bg-crawl px-6 py-2.5 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      ← Home
+    </a>
+    <a href="/library"
+       class="inline-block rounded-full border-4 border-black bg-paper px-6 py-2.5 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+      Browse library
+    </a>
+  </div>
+</section>
+
+{% endblock %}

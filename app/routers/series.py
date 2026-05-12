@@ -1,0 +1,490 @@
+"""Series detail page + missing-issues detection + merge tool.
+
+GET  /series/{id}            — detail page with progress bar, owned and
+                                 missing-issue lists, refresh form, and
+                                 the merge form.
+POST /series/{id}/refresh    — accepts source/source_id, persists them
+                                 onto the Series row, fetches the upstream
+                                 issue list, recomputes.
+POST /series/{id}/merge      — collapse this series into another:
+                                 reassign all owned `Comic.series_id`s to
+                                 the target, copy missing source/issue
+                                 data from source if target is empty,
+                                 delete the source row.
+
+Match logic for owned-vs-missing:
+
+  1. Precise:  Comic.source_id  ==  expected article title
+  2. Fallback: trailing digits of expected article title  ==  Comic.issue_number
+
+The fallback covers older comics that pre-date the source linkage.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated
+
+from collections import Counter, defaultdict
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, Response
+from fastapi.templating import Jinja2Templates
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from datetime import UTC, datetime
+
+from sqlalchemy import func, or_, update
+
+from app.db import get_session
+from app.models import Comic, Publisher, Series
+from app.services import comicvine, metron, wookieepedia
+from app.services.errors import UpstreamRateLimit
+from app.services.series_progress import compute_progress, match_owned, parse_expected
+
+# Map of source-name -> async fetcher that takes a source_id (article
+# title for Wookieepedia, numeric volume/series id for CV/Metron) and
+# returns a list of expected-issue labels.
+_FETCHERS: dict[str, callable] = {
+    "wookieepedia": wookieepedia.get_series_issues,
+    "comicvine":    comicvine.get_volume_issues,
+    "metron":       metron.get_series_issues,
+}
+
+router = APIRouter(tags=["series"])
+
+APP_DIR = Path(__file__).resolve().parents[1]
+templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+async def _load(session: AsyncSession, series_id: int) -> dict:
+    series = await session.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="series not found")
+    publisher = (
+        await session.get(Publisher, series.publisher_id)
+        if series.publisher_id
+        else None
+    )
+
+    comics_result = await session.exec(
+        select(Comic).where(Comic.series_id == series_id).order_by(Comic.issue_number)
+    )
+    comics = list(comics_result.all())
+
+    expected = parse_expected(series)
+    pairs, owned = match_owned(expected, comics)
+
+    # Comics in this series that aren't matched against any expected entry —
+    # for example one-shots, FCBD specials, etc. Display them under "Other"
+    # so they don't disappear from the page. Trades that are credited via
+    # collected_issues still count as "matched" — they shouldn't appear in
+    # the extras list just because they collect issues.
+    matched_ids: set[int] = set()
+    for pair in pairs:
+        if pair.direct is not None:
+            matched_ids.add(pair.direct.id)
+        if pair.trade is not None:
+            matched_ids.add(pair.trade.id)
+    extras = [c for c in comics if c.id not in matched_ids]
+
+    progress_pct = 0
+    if expected:
+        progress_pct = int(round(100 * owned / len(expected)))
+
+    # Other series the user could merge this one into. Sort by name so the
+    # dropdown is human-scanable; cap at 200 so we don't render thousands.
+    others_result = await session.exec(
+        select(Series).where(Series.id != series_id).order_by(Series.name).limit(200)
+    )
+    other_series = list(others_result.all())
+
+    # Flat owned-comics list for the cover collage at the top of the page.
+    # Prefer the direct issue match; fall back to the trade that collects it.
+    # `extras` (one-shots, FCBD, etc.) come last so they're still surfaced.
+    seen_ids: set[int] = set()
+    owned_comics: list[Comic] = []
+    for pair in pairs:
+        c = pair.direct or pair.trade
+        if c is not None and c.id not in seen_ids:
+            owned_comics.append(c)
+            seen_ids.add(c.id)
+    for c in extras:
+        if c.id not in seen_ids:
+            owned_comics.append(c)
+            seen_ids.add(c.id)
+
+    return {
+        "series": series,
+        "publisher": publisher,
+        "expected_pairs": pairs,
+        "expected_total": len(expected),
+        "owned_count": owned,
+        "missing_count": max(0, len(expected) - owned),
+        "extras": extras,
+        "owned_comics": owned_comics,
+        "progress_pct": progress_pct,
+        "other_series": other_series,
+    }
+
+
+@router.get("/series", response_class=HTMLResponse)
+async def series_index(
+    request: Request,
+    session: SessionDep,
+    publisher: list[str] = Query(default=[]),
+    fandom: list[str] = Query(default=[]),
+    status: list[str] = Query(default=[]),
+    q: str = Query(default=""),
+    sort: str = Query(default="name_asc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+) -> HTMLResponse:
+    if sort not in _SORT_VALUES:
+        sort = "name_asc"
+    publisher = _drop_empty(publisher)
+    fandom = _drop_empty(fandom)
+    status = [s for s in _drop_empty(status) if s in _STATUS_VALUES]
+    ctx = await _build_series_index(
+        session,
+        publishers=publisher, fandoms=fandom, statuses=status,
+        q=q, sort=sort, page=page, page_size=page_size,
+    )
+    return templates.TemplateResponse(request, "series_index.html", ctx)
+
+
+@router.get("/series/grid", response_class=HTMLResponse)
+async def series_index_grid(
+    request: Request,
+    session: SessionDep,
+    publisher: list[str] = Query(default=[]),
+    fandom: list[str] = Query(default=[]),
+    status: list[str] = Query(default=[]),
+    q: str = Query(default=""),
+    sort: str = Query(default="name_asc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+) -> HTMLResponse:
+    if sort not in _SORT_VALUES:
+        sort = "name_asc"
+    publisher = _drop_empty(publisher)
+    fandom = _drop_empty(fandom)
+    status = [s for s in _drop_empty(status) if s in _STATUS_VALUES]
+    ctx = await _build_series_index(
+        session,
+        publishers=publisher, fandoms=fandom, statuses=status,
+        q=q, sort=sort, page=page, page_size=page_size,
+    )
+    return templates.TemplateResponse(
+        request, "partials/_series_grid.html", ctx,
+    )
+
+
+@router.get("/series/{series_id}", response_class=HTMLResponse)
+async def series_detail(
+    series_id: int, request: Request, session: SessionDep
+) -> HTMLResponse:
+    ctx = await _load(session, series_id)
+    return templates.TemplateResponse(request, "series_detail.html", ctx)
+
+
+@router.post("/series/{series_id}/refresh")
+async def series_refresh(
+    series_id: int,
+    session: SessionDep,
+    source: str = Form(""),
+    source_id: str = Form(""),
+) -> Response:
+    """Pull the upstream issue list and store it on the Series row.
+
+    Submitted source/source_id override what's already on the row, so the
+    user can adopt or change the source link without leaving the page.
+
+    Sources supported: Wookieepedia (article title), ComicVine (numeric
+    volume id, e.g. `42537`), Metron (numeric series id).
+    """
+    series = await session.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="series not found")
+
+    src = (source or series.source or "").strip()
+    sid = (source_id or series.source_id or "").strip()
+    if not src or not sid:
+        raise HTTPException(status_code=400, detail="source and source_id required")
+
+    fetcher = _FETCHERS.get(src)
+    if fetcher is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported source {src!r}; expected one of {sorted(_FETCHERS)}",
+        )
+
+    try:
+        issues = await fetcher(sid)
+    except UpstreamRateLimit as exc:
+        # Surface a friendly 429 so the UI can render the message.
+        raise HTTPException(
+            status_code=429,
+            detail=f"{exc.source} is rate-limited ({exc.detail}) — try again later",
+        ) from exc
+
+    if not issues:
+        raise HTTPException(
+            status_code=502,
+            detail=f"no issues found at {src} for {sid!r}",
+        )
+
+    series.source = src
+    series.source_id = sid
+    series.expected_issues = "\n".join(issues)
+    session.add(series)
+    await session.commit()
+
+    return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+
+@router.post("/series/{series_id}/merge")
+async def series_merge(
+    series_id: int,
+    session: SessionDep,
+    target_id: int = Form(...),
+) -> Response:
+    """Collapse `series_id` into `target_id`. Every comic currently
+    pointing at the source is reassigned to the target; the source row is
+    then deleted. Source-derived fields on the target (publisher_id,
+    source/source_id, expected_issues) are filled from the source ONLY
+    when the target has nothing there — never overwriting good data.
+    """
+    if series_id == target_id:
+        raise HTTPException(status_code=400, detail="cannot merge a series into itself")
+
+    source = await session.get(Series, series_id)
+    target = await session.get(Series, target_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="source series not found")
+    if target is None:
+        raise HTTPException(status_code=404, detail="target series not found")
+
+    # Adopt source-only metadata on the target.
+    if target.publisher_id is None and source.publisher_id is not None:
+        target.publisher_id = source.publisher_id
+    if not target.source and source.source:
+        target.source = source.source
+        target.source_id = source.source_id
+    if not target.expected_issues and source.expected_issues:
+        target.expected_issues = source.expected_issues
+
+    # Reassign every comic in one bulk UPDATE.
+    await session.exec(
+        update(Comic)
+        .where(Comic.series_id == series_id)
+        .values(series_id=target_id, updated_at=datetime.now(UTC))
+    )
+    session.add(target)
+    await session.delete(source)
+    await session.commit()
+
+    # HTMX picks the redirect up; full-page flow falls back to a 303.
+    return Response(
+        status_code=204,
+        headers={"HX-Redirect": f"/series/{target_id}"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Series library — `GET /series` index
+# ---------------------------------------------------------------------------
+
+_STATUS_VALUES = ("complete", "in_progress", "untracked")
+_SORT_VALUES = ("name_asc", "name_desc", "count_desc", "completion_desc")
+
+
+def _drop_empty(values: list[str]) -> list[str]:
+    return [v for v in (values or []) if v]
+
+
+async def _bulk_comic_counts(session: AsyncSession, series_ids: list[int]) -> dict[int, int]:
+    if not series_ids:
+        return {}
+    rows = (await session.exec(
+        select(Comic.series_id, func.count(Comic.id))
+        .where(Comic.series_id.in_(series_ids))
+        .group_by(Comic.series_id)
+    )).all()
+    return {sid: int(n) for (sid, n) in rows}
+
+
+async def _bulk_fandom_mode(session: AsyncSession, series_ids: list[int]) -> dict[int, str]:
+    """Mode of `Comic.fandom` per series — i.e. the fandom that the largest
+    share of its comics carry. Used for the fandom filter facet and the
+    small badge on each series card."""
+    if not series_ids:
+        return {}
+    rows = (await session.exec(
+        select(Comic.series_id, Comic.fandom)
+        .where(Comic.series_id.in_(series_ids), Comic.fandom.is_not(None))
+    )).all()
+    by_series: dict[int, Counter] = defaultdict(Counter)
+    for sid, fandom in rows:
+        by_series[sid][fandom] += 1
+    return {sid: c.most_common(1)[0][0] for sid, c in by_series.items() if c}
+
+
+async def _bulk_series_covers(
+    session: AsyncSession, series_ids: list[int], *, per_series: int = 4,
+) -> dict[int, list[str]]:
+    """Up to N owned-comic covers per series, ordered by cover date / id.
+    Drives the collage on each series card when `Series.cover_url` isn't
+    set on the row itself."""
+    if not series_ids:
+        return {}
+    rows = (await session.exec(
+        select(Comic.series_id, Comic.cover_url_local, Comic.cover_url_remote, Comic.cover_date, Comic.id)
+        .where(
+            Comic.series_id.in_(series_ids),
+            or_(Comic.cover_url_local.is_not(None), Comic.cover_url_remote.is_not(None)),
+        )
+        .order_by(
+            Comic.series_id.asc(),
+            Comic.cover_date.asc().nullslast(),
+            Comic.id.asc(),
+        )
+    )).all()
+    out: dict[int, list[str]] = defaultdict(list)
+    for sid, local, remote, _cd, _cid in rows:
+        url = local or remote
+        if not url:
+            continue
+        if len(out[sid]) < per_series:
+            out[sid].append(url)
+    return dict(out)
+
+
+def _series_status(progress) -> str:
+    """Map a `Progress` (or None) onto our three top-level buckets."""
+    if progress is None or progress.total == 0:
+        return "untracked"
+    return "complete" if progress.is_complete else "in_progress"
+
+
+def _sort_rows(rows: list[dict], how: str) -> list[dict]:
+    if how == "name_desc":
+        return sorted(rows, key=lambda r: (r["series"].name or "").lower(), reverse=True)
+    if how == "count_desc":
+        return sorted(rows, key=lambda r: (-r["comic_count"], (r["series"].name or "").lower()))
+    if how == "completion_desc":
+        return sorted(
+            rows,
+            key=lambda r: (
+                -(r["progress_pct"] if r["progress_pct"] is not None else -1),
+                -r["comic_count"],
+                (r["series"].name or "").lower(),
+            ),
+        )
+    return sorted(rows, key=lambda r: (r["series"].name or "").lower())
+
+
+async def _build_series_index(
+    session: AsyncSession,
+    *,
+    publishers: list[str],
+    fandoms: list[str],
+    statuses: list[str],
+    q: str,
+    sort: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    """Filter → enrich → status-filter → sort → paginate.
+
+    Returns a context dict ready to feed `series_index.html` (and the
+    `_series_grid.html` partial during HTMX swaps)."""
+    base = select(Series, Publisher).join(
+        Publisher, Publisher.id == Series.publisher_id, isouter=True,
+    )
+    if publishers:
+        base = base.where(Publisher.name.in_(publishers))
+    if q:
+        base = base.where(Series.name.ilike(f"%{q}%"))
+    if fandoms:
+        sub = select(Comic.series_id).where(Comic.fandom.in_(fandoms))
+        base = base.where(Series.id.in_(sub))
+    rows = (await session.exec(base.order_by(Series.name.asc()))).all()
+
+    series_ids = [s.id for (s, _p) in rows]
+    counts = await _bulk_comic_counts(session, series_ids)
+    fandom_mode = await _bulk_fandom_mode(session, series_ids)
+    progress_by_id = await compute_progress(session, series_ids)
+
+    enriched: list[dict] = []
+    for s, pub in rows:
+        prog = progress_by_id.get(s.id)
+        enriched.append({
+            "series": s,
+            "publisher": pub,
+            "comic_count": counts.get(s.id, 0),
+            "fandom": fandom_mode.get(s.id),
+            "progress": prog,
+            "progress_pct": prog.pct if prog else None,
+            "owned": prog.owned if prog else 0,
+            "expected_total": prog.total if prog else 0,
+            "is_complete": bool(prog and prog.is_complete),
+            "status": _series_status(prog),
+        })
+
+    if statuses:
+        wanted = set(statuses)
+        enriched = [r for r in enriched if r["status"] in wanted]
+
+    enriched = _sort_rows(enriched, sort)
+
+    total = len(enriched)
+    page_count = max(1, (total + page_size - 1) // page_size)
+    page = min(page, page_count)
+    start = (page - 1) * page_size
+    page_rows = enriched[start:start + page_size]
+
+    page_ids = [r["series"].id for r in page_rows]
+    covers_by_id = await _bulk_series_covers(session, page_ids, per_series=4)
+    for r in page_rows:
+        r["cover_urls"] = covers_by_id.get(r["series"].id, [])
+
+    pub_facets: Counter = Counter()
+    fan_facets: Counter = Counter()
+    status_facets: Counter = Counter()
+    for r in enriched:
+        if r["publisher"]:
+            pub_facets[r["publisher"].name] += 1
+        if r["fandom"]:
+            fan_facets[r["fandom"]] += 1
+        status_facets[r["status"]] += 1
+
+    return {
+        "rows": page_rows,
+        "total": total,
+        "page": page,
+        "page_count": page_count,
+        "page_size": page_size,
+        "selected": {
+            "publishers": list(publishers),
+            "fandoms": list(fandoms),
+            "statuses": list(statuses),
+            "q": q,
+            "sort": sort,
+        },
+        "facets": {
+            "publishers": pub_facets.most_common(),
+            "fandoms": fan_facets.most_common(),
+            "statuses": [(k, status_facets.get(k, 0)) for k in _STATUS_VALUES],
+        },
+    }
+
+
+_INDEX_HELPERS_DEFINED_BELOW = True  # see file footer
+# (Index endpoints `/series` + `/series/grid` are registered earlier in
+#  the file — above the `/series/{series_id}` route — so FastAPI's path
+#  matcher reaches the static `/series/grid` URL first. The handler
+#  bodies live above; helpers below stay where they are.)

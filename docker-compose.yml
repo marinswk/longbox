@@ -1,0 +1,20 @@
+services:
+  longbox:
+    build: .
+    container_name: longbox
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - longbox_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  longbox_data:

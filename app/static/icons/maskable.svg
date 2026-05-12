@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable variant: full-bleed background so Android adaptive icons
+       can apply any shape mask without revealing transparent corners.
+       The "L" lives inside the center 80% safe zone (51px → 461px). -->
+  <rect x="0" y="0" width="512" height="512" fill="#FFE81F"/>
+  <path d="M180 160 H236 V322 H368 V378 H180 Z" fill="#000"/>
+</svg>
