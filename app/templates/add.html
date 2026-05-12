@@ -196,6 +196,18 @@
         verbose: false,
       });
 
+      // html5-qrcode's `start()` signature is picky:
+      //   start(cameraIdOrConfig, configuration, success, error)
+      // The first argument must be EITHER a device-id string OR an
+      // object with EXACTLY ONE KEY (`{deviceId: ...}` or
+      // `{facingMode: ...}`). Anything else throws
+      // "cameraIdOrConfig object should have exactly 1 key".
+      // Full MediaTrackConstraints (width / height / advanced) live
+      // under `configuration.videoConstraints` instead. Passing the
+      // higher-resolution request via videoConstraints is what makes
+      // ISBN barcodes decodable at typical arm's length on phones.
+      const cameraSelector = { facingMode: { ideal: 'environment' } };
+
       const config = {
         fps: 15,
         // Scan zone covers almost the whole preview so users don't need
@@ -209,25 +221,22 @@
         // some Android stacks send a flipped preview by default and the
         // decoder then can't parse barcodes (they look reversed).
         disableFlip: true,
-      };
-
-      // Camera constraints. Passed as the FIRST argument to `start()`
-      // (the `cameraIdOrConfig` slot) so the library uses them
-      // unambiguously — the older `config.videoConstraints` path was
-      // being silently merged in a way that produced low-res previews
-      // on some devices.
-      const cameraConstraints = {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 },
-        // `focusMode: continuous` keeps autofocus active as the user
-        // adjusts distance. Best-effort — Firefox often ignores this.
-        advanced: [{ focusMode: 'continuous' }],
+        // Full MediaTrackConstraints — fed to getUserMedia by the
+        // library when starting the stream. `width/height: ideal:
+        // 1920/1080` requests 1080p but lets the browser negotiate
+        // down. `focusMode: continuous` keeps autofocus active as the
+        // user adjusts distance (best-effort; Firefox often ignores).
+        videoConstraints: {
+          facingMode: { ideal: 'environment' },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 },
+          advanced: [{ focusMode: 'continuous' }],
+        },
       };
 
       try {
         await qr.start(
-          cameraConstraints,
+          cameraSelector,
           config,
           onDecoded,
           onScanFailure,
