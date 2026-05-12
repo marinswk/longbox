@@ -3,6 +3,25 @@
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
+{# Polyfill `window.BarcodeDetector` for browsers without a native
+   implementation — most importantly Firefox on Android, which has
+   no native barcode-detection API. The polyfill is a WASM port of
+   the zxing-cpp library: ~200KB gzipped, fetched once + cached
+   indefinitely by jsdelivr. The side-effects build registers itself
+   automatically as `window.BarcodeDetector` when the global is
+   missing, so the scanner code below doesn't need to know whether
+   the API is native or polyfilled. #}
+<script type="module">
+  if (!('BarcodeDetector' in window)) {
+    import('https://cdn.jsdelivr.net/npm/barcode-detector@2/dist/es/side-effects.min.js')
+      .then(() => { window.__lbBarcodePolyfillReady = true; })
+      .catch((e) => { window.__lbBarcodePolyfillReady = false;
+                      console.warn('Barcode polyfill failed:', e); });
+  } else {
+    window.__lbBarcodePolyfillReady = true;
+  }
+</script>
+
 <section class="panel rounded-3xl p-8">
   <h2 class="font-display text-4xl tracking-wide">ADD A COMIC</h2>
   <p class="mt-2 text-gray-600">
@@ -159,20 +178,30 @@
     let frameTick = 0;      // diagnostic frame counter
     let lastErr = '';       // diagnostic: most recent per-frame error
 
-    // Feature detect. We require BOTH the API and a callable
-    // constructor — older Chromiums shipped a stub that throws on
-    // instantiation. The instance is created here so we pay the cost
-    // exactly once.
+    // Detector is built lazily at start() time so we can wait for the
+    // BarcodeDetector polyfill to finish loading — Firefox on Android
+    // has no native API and relies on the WASM polyfill that imports
+    // asynchronously above. Build it once per scanner session and
+    // reuse across the rAF detect loop.
     let nativeDetector = null;
-    if (typeof window.BarcodeDetector === 'function') {
+
+    // Wait up to `timeoutMs` for `window.BarcodeDetector` to appear
+    // (either native or polyfilled), then try to instantiate it.
+    // Returns the detector or null. Restricting `formats` to the 1D
+    // codes printed on comics keeps the WASM detector fast and avoids
+    // accidental QR / Data-Matrix reads off background junk.
+    async function buildDetector(timeoutMs) {
+      const deadline = performance.now() + timeoutMs;
+      while (typeof window.BarcodeDetector !== 'function'
+             && performance.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (typeof window.BarcodeDetector !== 'function') return null;
       try {
-        nativeDetector = new window.BarcodeDetector({
-          // Restrict to the 1D formats actually printed on comic
-          // barcodes. Filtering keeps the C++ detector fast and avoids
-          // accidental QR-code reads from background junk.
+        return new window.BarcodeDetector({
           formats: ['ean_13', 'upc_a', 'ean_8', 'upc_e', 'code_128'],
         });
-      } catch { nativeDetector = null; }
+      } catch { return null; }
     }
 
     function setMsg(text, kind) {
@@ -231,25 +260,26 @@
       lastErr = '';
       showOverlay();
       setMsg('Starting camera…');
-      // Prefer the fast native path. Fall back to html5-qrcode only
-      // when the detector isn't available — never run both at once.
+      // Build the BarcodeDetector lazily so the WASM polyfill (Firefox
+      // on Android, older Safari) has a chance to finish loading. We
+      // wait up to 2.5s — enough for a first-time hit on a cold cache,
+      // but short enough that a permanently-failed import doesn't hold
+      // the user hostage.
+      nativeDetector = await buildDetector(2500);
+      // Prefer the fast native/polyfilled path. Fall back to
+      // html5-qrcode only when BarcodeDetector is unavailable.
       if (nativeDetector && navigator.mediaDevices?.getUserMedia) {
         try {
           await startNative();
           return;
         } catch (err) {
-          // Camera permission / HTTPS errors are user-facing — no
-          // point silently dropping to the slow path; the same call
-          // would fail there too.
           setMsg(humaniseCameraError(err), 'error');
           busy = false;
           return;
         }
       }
-      // Fallback path. The pure-JS decoder takes seconds per detection;
-      // tell the user it'll feel slow.
       if (!window.Html5Qrcode) {
-        setMsg('No native barcode support and the JS fallback failed to load. Try Chrome or update your browser.', 'error');
+        setMsg('No barcode support available. Try Chrome, or check your network so the WASM polyfill can load.', 'error');
         busy = false;
         return;
       }
@@ -416,7 +446,12 @@
         const s = track?.getSettings?.() || {};
         const w = s.width || 0, h = s.height || 0;
         const fps = s.frameRate ? Math.round(s.frameRate) : 0;
-        const engine = nativeDetector ? 'native' : 'js';
+        // Engine label: "fast" means the BarcodeDetector path
+        // (either native or the WASM polyfill — both are fast); "js"
+        // means the html5-qrcode pure-JS fallback. Users care about
+        // perf, not API provenance, so a single fast/js label is
+        // clearer than splitting native vs polyfill.
+        const engine = nativeDetector ? 'fast' : 'js';
         if (w && h && w < 1280) {
           setMsg(`Aim at a barcode · ${engine} · ${w}×${h}@${fps}fps (low res — try moving closer).`);
         } else if (w && h) {
