@@ -123,9 +123,21 @@
 <section id="flow" class="mt-8"></section>
 
 <script>
-  // Fullscreen barcode scanner. Wraps the existing html5-qrcode library
-  // with a modal overlay, torch toggle (where supported), and haptic
-  // feedback so the on-phone experience feels app-like.
+  // Fullscreen barcode scanner. Two engines:
+  //
+  //   FAST PATH — native BarcodeDetector (Chromium on Android since
+  //   ~2019, Safari 17+, Edge). Runs in the browser's C++ layer;
+  //   typically locks onto an EAN-13 / UPC-A barcode in under 100ms.
+  //   We drive it ourselves via getUserMedia + a per-frame detect()
+  //   loop, skipping html5-qrcode entirely because its native-API
+  //   integration is buggy and slow.
+  //
+  //   FALLBACK — html5-qrcode (ZXing-port pure-JS decoder). Used on
+  //   Firefox and older Safari where BarcodeDetector isn't available.
+  //   Slower but works everywhere.
+  //
+  // The UI (overlay, torch button, status line, haptic feedback) is
+  // identical for both engines.
   (function () {
     const toggle  = document.getElementById('scan-toggle');
     const overlay = document.getElementById('scanner-overlay');
@@ -134,14 +146,34 @@
     const msg     = document.getElementById('scanner-msg');
     const input   = document.getElementById('identifier');
     const form    = document.getElementById('lookup-form');
+    const scannerEl = document.getElementById('scanner');
     const elementId = 'scanner';
 
-    let qr = null;        // active Html5Qrcode instance
-    let busy = false;     // scanning in progress
-    let firing = false;   // we already got a hit, don't fire again
-    let torchOn = false;  // current torch state (best-effort)
-    let frameTick = 0;    // diagnostic: counts per-frame failure callbacks
-    let lastErr = '';     // diagnostic: most recent per-frame error name
+    let qr = null;          // active Html5Qrcode instance (fallback)
+    let nativeStream = null; // MediaStream (fast path)
+    let nativeVideo = null;  // <video> element (fast path)
+    let nativeLoopId = 0;    // requestAnimationFrame handle (fast path)
+    let busy = false;       // scanning in progress
+    let firing = false;     // we already got a hit, don't fire again
+    let torchOn = false;    // current torch state (best-effort)
+    let frameTick = 0;      // diagnostic frame counter
+    let lastErr = '';       // diagnostic: most recent per-frame error
+
+    // Feature detect. We require BOTH the API and a callable
+    // constructor — older Chromiums shipped a stub that throws on
+    // instantiation. The instance is created here so we pay the cost
+    // exactly once.
+    let nativeDetector = null;
+    if (typeof window.BarcodeDetector === 'function') {
+      try {
+        nativeDetector = new window.BarcodeDetector({
+          // Restrict to the 1D formats actually printed on comic
+          // barcodes. Filtering keeps the C++ detector fast and avoids
+          // accidental QR-code reads from background junk.
+          formats: ['ean_13', 'upc_a', 'ean_8', 'upc_e', 'code_128'],
+        });
+      } catch { nativeDetector = null; }
+    }
 
     function setMsg(text, kind) {
       msg.textContent = text;
@@ -163,11 +195,27 @@
     }
 
     async function stop() {
+      // Cancel the native detect loop FIRST so a late frame can't
+      // re-fire onDecoded after we've torn the stream down.
+      if (nativeLoopId) {
+        cancelAnimationFrame(nativeLoopId);
+        nativeLoopId = 0;
+      }
+      if (nativeStream) {
+        try { nativeStream.getTracks().forEach(t => t.stop()); } catch {}
+        nativeStream = null;
+      }
+      if (nativeVideo) {
+        try { nativeVideo.srcObject = null; nativeVideo.remove(); } catch {}
+        nativeVideo = null;
+      }
       if (qr) {
         try { await qr.stop(); } catch {}
         try { qr.clear(); } catch {}
         qr = null;
       }
+      // Wipe the scanner host so a re-open doesn't show a stale frame.
+      try { scannerEl.innerHTML = ''; } catch {}
       busy = false;
       firing = false;
       torchOn = false;
@@ -178,54 +226,123 @@
 
     async function start() {
       if (busy) return;
-      if (!window.Html5Qrcode) {
-        showOverlay();
-        setMsg('Scanner library failed to load. Check your network.', 'error');
-        return;
-      }
       busy = true;
+      frameTick = 0;
+      lastErr = '';
       showOverlay();
       setMsg('Starting camera…');
+      // Prefer the fast native path. Fall back to html5-qrcode only
+      // when the detector isn't available — never run both at once.
+      if (nativeDetector && navigator.mediaDevices?.getUserMedia) {
+        try {
+          await startNative();
+          return;
+        } catch (err) {
+          // Camera permission / HTTPS errors are user-facing — no
+          // point silently dropping to the slow path; the same call
+          // would fail there too.
+          setMsg(humaniseCameraError(err), 'error');
+          busy = false;
+          return;
+        }
+      }
+      // Fallback path. The pure-JS decoder takes seconds per detection;
+      // tell the user it'll feel slow.
+      if (!window.Html5Qrcode) {
+        setMsg('No native barcode support and the JS fallback failed to load. Try Chrome or update your browser.', 'error');
+        busy = false;
+        return;
+      }
+      await startFallback();
+    }
 
+    // ──────────────────────────────────────────────────────────────
+    // FAST PATH — native BarcodeDetector
+    // ──────────────────────────────────────────────────────────────
+
+    async function startNative() {
+      // 1080p preview + continuous autofocus. The browser negotiates
+      // down on devices that can't deliver, surfaced via getSettings()
+      // in reportCameraState().
+      nativeStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 },
+          advanced: [{ focusMode: 'continuous' }],
+        },
+        audio: false,
+      });
+      nativeVideo = document.createElement('video');
+      nativeVideo.srcObject = nativeStream;
+      nativeVideo.setAttribute('playsinline', '');
+      nativeVideo.muted = true;
+      nativeVideo.autoplay = true;
+      // Fill the scanner box without distortion.
+      nativeVideo.style.width = '100%';
+      nativeVideo.style.height = '100%';
+      nativeVideo.style.objectFit = 'cover';
+      scannerEl.innerHTML = '';
+      scannerEl.appendChild(nativeVideo);
+      await nativeVideo.play();
+
+      await reportCameraState();
+      await maybeShowTorch();
+
+      // Detection loop. We don't await detect() inside the rAF tick
+      // because the browser will pile up frames if detection lags;
+      // instead we kick it off and only schedule the next tick from
+      // the .then() callback. That self-paces against the slowest of
+      // (camera fps, detector latency, GPU upload time).
+      function tick() {
+        if (!busy || firing) return;
+        nativeDetector.detect(nativeVideo).then(barcodes => {
+          frameTick++;
+          if (barcodes && barcodes.length > 0) {
+            // Prefer EAN-13 (book ISBN) over UPC-A (single-issue), if
+            // both happen to land in the same frame.
+            const ranked = barcodes.slice().sort((a, b) => {
+              const score = f => (f === 'ean_13' ? 0 : f === 'upc_a' ? 1 : 2);
+              return score(a.format) - score(b.format);
+            });
+            onDecoded(ranked[0].rawValue, ranked[0].format);
+            return;
+          }
+          // Throttle heartbeat updates so the text doesn't strobe at
+          // 60Hz. ~1 update per second is enough liveness signal.
+          if (frameTick % 60 === 0) {
+            setMsg(`Scanning… aim at a barcode (${frameTick} frames)`);
+          }
+          nativeLoopId = requestAnimationFrame(tick);
+        }).catch(err => {
+          lastErr = err.message || String(err);
+          // Re-arm the loop unless something fatal happened. Most
+          // detector errors are transient (frame not ready yet).
+          if (busy && !firing) nativeLoopId = requestAnimationFrame(tick);
+        });
+      }
+      nativeLoopId = requestAnimationFrame(tick);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // FALLBACK PATH — html5-qrcode (pure JS)
+    // ──────────────────────────────────────────────────────────────
+
+    async function startFallback() {
       qr = new Html5Qrcode(elementId, {
-        // Native BarcodeDetector when present (Chromium on Android since
-        // 2020). JS fallback elsewhere. No `formatsToSupport` filter — the
-        // named enum isn't reliably on `window` at config-build time and
-        // the perf hit from scanning all formats is small on real devices.
+        // Without the native engine the library uses its ZXing port,
+        // which is slow. We can't make it fast — just make it correct.
         experimentalFeatures: { useBarCodeDetectorIfSupported: true },
         verbose: false,
       });
-
-      // html5-qrcode's `start()` signature is picky:
-      //   start(cameraIdOrConfig, configuration, success, error)
-      // The first argument must be EITHER a device-id string OR an
-      // object with EXACTLY ONE KEY (`{deviceId: ...}` or
-      // `{facingMode: ...}`). Anything else throws
-      // "cameraIdOrConfig object should have exactly 1 key".
-      // Full MediaTrackConstraints (width / height / advanced) live
-      // under `configuration.videoConstraints` instead. Passing the
-      // higher-resolution request via videoConstraints is what makes
-      // ISBN barcodes decodable at typical arm's length on phones.
       const cameraSelector = { facingMode: { ideal: 'environment' } };
-
       const config = {
         fps: 15,
-        // Scan zone covers almost the whole preview so users don't need
-        // pixel-perfect aim. The visual corner brackets are decorative;
-        // the actual detection happens inside this rectangle.
         qrbox: (vw, vh) => ({
           width:  Math.max(160, Math.floor(vw * 0.92)),
           height: Math.max(120, Math.floor(vh * 0.6)),
         }),
-        // Disable the library's mirroring quirk for the rear camera —
-        // some Android stacks send a flipped preview by default and the
-        // decoder then can't parse barcodes (they look reversed).
         disableFlip: true,
-        // Full MediaTrackConstraints — fed to getUserMedia by the
-        // library when starting the stream. `width/height: ideal:
-        // 1920/1080` requests 1080p but lets the browser negotiate
-        // down. `focusMode: continuous` keeps autofocus active as the
-        // user adjusts distance (best-effort; Firefox often ignores).
         videoConstraints: {
           facingMode: { ideal: 'environment' },
           width:  { ideal: 1920 },
@@ -233,38 +350,34 @@
           advanced: [{ focusMode: 'continuous' }],
         },
       };
-
       try {
-        await qr.start(
-          cameraSelector,
-          config,
-          onDecoded,
-          onScanFailure,
-        );
-        // Read the actual negotiated resolution + format-detection path
-        // back from the active MediaStreamTrack and surface them so the
-        // user can debug why a scan might be failing.
+        await qr.start(cameraSelector, config, onDecoded, onScanFailure);
         await reportCameraState();
-        // Expose torch if the device supports it.
         await maybeShowTorch();
       } catch (err) {
-        const msgText =
-          location.protocol !== 'https:' && location.hostname !== 'localhost'
-            ? 'Camera needs HTTPS. Use https:// or localhost, or set up a reverse proxy with TLS.'
-            : /Permission/.test(String(err))
-            ? 'Camera permission denied. Allow access in your browser settings and try again.'
-            : 'Could not start camera: ' + err;
-        setMsg(msgText, 'error');
-        // Keep the overlay open so the user can read the error + close.
+        setMsg(humaniseCameraError(err), 'error');
         busy = false;
       }
     }
 
-    // Torch capabilities aren't exposed by html5-qrcode directly; reach
-    // into the active <video> element's underlying MediaStreamTrack.
+    function humaniseCameraError(err) {
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        return 'Camera needs HTTPS. Use https:// or localhost.';
+      }
+      if (/Permission|NotAllowed/.test(String(err))) {
+        return 'Camera permission denied. Allow access in your browser settings and try again.';
+      }
+      if (/NotFound|DevicesNotFound/.test(String(err))) {
+        return 'No camera found on this device.';
+      }
+      return 'Could not start camera: ' + err;
+    }
+
+    // Torch capabilities — works the same for both engines since both
+    // expose a <video> with a MediaStreamTrack underneath.
     async function maybeShowTorch() {
       try {
-        const video = overlay.querySelector('video');
+        const video = nativeVideo || overlay.querySelector('video');
         const track = video?.srcObject?.getVideoTracks?.()[0];
         const caps  = track?.getCapabilities?.();
         if (caps && 'torch' in caps) torchBt.hidden = false;
@@ -273,7 +386,7 @@
 
     async function toggleTorch() {
       try {
-        const video = overlay.querySelector('video');
+        const video = nativeVideo || overlay.querySelector('video');
         const track = video?.srcObject?.getVideoTracks?.()[0];
         if (!track) return;
         torchOn = !torchOn;
@@ -284,47 +397,37 @@
       }
     }
 
-    // Per-frame failure callback. html5-qrcode invokes this every frame
-    // where it couldn't decode a barcode — normal until the user aims at
-    // one. We use it as a heartbeat so the status line shows the scanner
-    // is alive (vs "wedged after start"). On Android Firefox in
-    // particular, the silent-no-callback failure mode used to leave the
-    // overlay looking dead — the ticking counter rules that out.
+    // html5-qrcode's per-frame failure callback (fallback only). Kept
+    // as a heartbeat so the user sees the scanner is alive.
     function onScanFailure(err) {
       frameTick++;
       try {
         lastErr = (err && (err.name || err.message)) || String(err || '');
       } catch { lastErr = ''; }
-      // Update the status line every ~45 failures (~3s at 15fps) so the
-      // text isn't a strobe but still proves liveness.
       if (!firing && frameTick % 45 === 0) {
         setMsg(`Scanning… ${frameTick} frames seen — aim at a barcode`);
       }
     }
 
-    // Surface the actual negotiated MediaStreamTrack settings. If the
-    // browser couldn't honour our 1080p request and downgraded to 480p,
-    // the barcode bars become too thin to decode at typical phone
-    // distance. Showing the user the real resolution makes that
-    // failure mode debuggable instead of mysterious.
     async function reportCameraState() {
       try {
-        const video = overlay.querySelector('video');
+        const video = nativeVideo || overlay.querySelector('video');
         const track = video?.srcObject?.getVideoTracks?.()[0];
         const s = track?.getSettings?.() || {};
         const w = s.width || 0, h = s.height || 0;
         const fps = s.frameRate ? Math.round(s.frameRate) : 0;
+        const engine = nativeDetector ? 'native' : 'js';
         if (w && h && w < 1280) {
-          setMsg(`Aim a barcode. Camera negotiated ${w}×${h}@${fps}fps (low res — try moving closer).`);
+          setMsg(`Aim at a barcode · ${engine} · ${w}×${h}@${fps}fps (low res — try moving closer).`);
         } else if (w && h) {
-          setMsg(`Aim a barcode. Hold ~15cm away. (${w}×${h}@${fps}fps)`);
+          setMsg(`Aim at a barcode · ${engine} · ${w}×${h}@${fps}fps`);
         } else {
           setMsg('Aim a comic\'s barcode at the camera.');
         }
       } catch { /* getSettings is best-effort */ }
     }
 
-    function onDecoded(text) {
+    function onDecoded(text, format) {
       if (firing) return;
       firing = true;
       // Strip non-digits — most barcode formats return digits only, but a
