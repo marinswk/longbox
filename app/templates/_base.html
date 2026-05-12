@@ -289,39 +289,147 @@
       {% block content %}{% endblock %}
     </main>
 
-    {# Register the service worker. Wrapped in `'serviceWorker' in
-       navigator` so older browsers + private/incognito modes degrade
-       silently. The `beforeinstallprompt` capture lets the install
-       prompt fire from a button anywhere on the site by listening for
-       `window.lbInstall.show()`. #}
+    {# Service worker + install button orchestration.
+       - Chromium browsers (Chrome / Edge / Brave / Samsung Internet)
+         fire `beforeinstallprompt` and we use the native prompt.
+       - Firefox + iOS Safari never fire it; clicking the button opens
+         the #lb-install-help modal with browser-specific instructions. #}
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker.register("/sw.js").catch(() => {});
         });
       }
-      // Capture the install prompt so it can be shown from any "📱 Install
-      // Longbox" button in the app. Chrome / Edge / Brave only.
+
+      // Detect installed state. `display-mode: standalone` is the
+      // standards-compliant signal; `navigator.standalone` is the
+      // legacy iOS Safari one.
+      function lbIsInstalled() {
+        try {
+          if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) return true;
+        } catch {}
+        if (window.navigator.standalone === true) return true;
+        return false;
+      }
+
+      // Capture the install prompt for Chromium engines that fire it.
       window.lbDeferredPrompt = null;
       window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
         window.lbDeferredPrompt = e;
+      });
+      window.addEventListener("appinstalled", () => {
+        window.lbDeferredPrompt = null;
         document.querySelectorAll('[data-lb-install]').forEach((el) => {
-          el.hidden = false;
+          el.hidden = true;
         });
       });
+
+      // Browser detection for the help modal. We rely on UA strings
+      // because the WHOLE POINT is to know whether the engine will
+      // fire beforeinstallprompt — that *is* a brand thing.
+      function lbDetectBrowser() {
+        const ua = navigator.userAgent || "";
+        if (/iPhone|iPad|iPod/.test(ua)) return "ios-safari";
+        if (/Firefox|FxiOS/.test(ua))    return "firefox";
+        return "chromium";
+      }
+
+      function lbInstallShowHelp() {
+        const browser = lbDetectBrowser();
+        const modal = document.getElementById("lb-install-help");
+        const body  = document.getElementById("lb-install-help-body");
+        if (!modal || !body) return;
+        const STEPS = {
+          "ios-safari": [
+            "Tap the <strong>Share</strong> button at the bottom of Safari (square with an up-arrow).",
+            "Scroll down and tap <strong>Add to Home Screen</strong>.",
+            "Confirm the name and tap <strong>Add</strong>.",
+          ],
+          "firefox": [
+            "Tap the <strong>⋮ menu</strong> in the top-right corner.",
+            "Tap <strong>Install</strong> (or <strong>Add to Home screen</strong> on older Firefox).",
+            "Confirm to add the icon to your home screen.",
+          ],
+          "chromium": [
+            "Tap the <strong>⋮ menu</strong> in the top-right corner.",
+            "Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.",
+            "Confirm to add the icon.",
+            "<em>If the option isn't there, the browser may have already dismissed an automatic prompt — clear site data and reload.</em>",
+          ],
+        };
+        const heading = {
+          "ios-safari": "Install on iOS",
+          "firefox":    "Install on Firefox",
+          "chromium":   "Install via the browser menu",
+        }[browser];
+        body.innerHTML =
+          `<p class="font-display text-2xl tracking-wide">${heading}</p>` +
+          "<ol class='mt-3 list-inside list-decimal space-y-2 text-sm'>" +
+          STEPS[browser].map((s) => `<li>${s}</li>`).join("") +
+          "</ol>";
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+      }
+      function lbInstallHideHelp() {
+        const modal = document.getElementById("lb-install-help");
+        if (modal) {
+          modal.classList.add("hidden");
+          modal.classList.remove("flex");
+        }
+      }
+
+      // Public API used by `[data-lb-install]` buttons. If we captured a
+      // native prompt, use it; otherwise open the help modal.
       window.lbInstall = {
         show: async () => {
+          if (lbIsInstalled()) {
+            alert("Longbox is already installed on this device.");
+            return;
+          }
           const p = window.lbDeferredPrompt;
-          if (!p) return;
-          p.prompt();
-          await p.userChoice;
-          window.lbDeferredPrompt = null;
+          if (p) {
+            p.prompt();
+            await p.userChoice;
+            window.lbDeferredPrompt = null;
+          } else {
+            lbInstallShowHelp();
+          }
+        },
+        hideHelp: lbInstallHideHelp,
+      };
+
+      // Hide the install button entirely once Longbox is already running
+      // as a standalone PWA — nothing left to install.
+      window.addEventListener("load", () => {
+        if (lbIsInstalled()) {
           document.querySelectorAll('[data-lb-install]').forEach((el) => {
             el.hidden = true;
           });
-        },
-      };
+        }
+      });
     </script>
+
+    {# Install-help modal. Hidden by default; revealed by
+       `window.lbInstall.show()` whenever the browser didn't give us a
+       native prompt (Firefox / Safari / Chrome-after-dismissal). #}
+    <div id="lb-install-help"
+         class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4"
+         onclick="if (event.target === this) lbInstall.hideHelp()"
+         role="dialog" aria-modal="true" aria-label="How to install Longbox">
+      <div class="panel max-w-md rounded-2xl bg-paper p-5">
+        <div id="lb-install-help-body"></div>
+        <p class="mt-4 text-[11px] text-gray-600">
+          Once installed, Longbox opens in its own window — no browser tabs,
+          no URL bar — and the last visited pages keep working offline.
+        </p>
+        <div class="mt-4 flex justify-end">
+          <button type="button" onclick="lbInstall.hideHelp()"
+                  class="rounded-lg border-4 border-black bg-crawl px-4 py-2 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000]">
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

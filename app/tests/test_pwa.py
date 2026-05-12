@@ -110,10 +110,53 @@ def test_base_template_captures_beforeinstallprompt():
 # ── 3.5 Install button on home page ──────────────────────────────────
 
 
-def test_home_page_includes_install_button_hidden_by_default():
+def test_home_page_includes_install_button_visible_by_default():
+    """Always-visible install button (the older `hidden` default broke
+    Firefox + iOS Safari, neither of which fires beforeinstallprompt to
+    flip it visible)."""
     with _client() as client:
         r = client.get("/")
-        # Button is present but `hidden` until beforeinstallprompt fires
-        # and the JS flips it visible.
         assert "Install Longbox" in r.text
         assert "data-lb-install" in r.text
+
+
+def test_install_help_modal_is_rendered_on_every_page():
+    """The fallback help modal lives in _base.html so any page's install
+    button can open it — not just the home page hero."""
+    with _client() as client:
+        r = client.get("/library")
+        assert 'id="lb-install-help"' in r.text
+        assert 'id="lb-install-help-body"' in r.text
+        assert "lbInstallShowHelp" in r.text
+
+
+def test_install_help_has_per_browser_steps():
+    """Verify the JS carries instructions for the three browsers that
+    won't trigger the native prompt path."""
+    with _client() as client:
+        body = client.get("/").text
+        assert "ios-safari" in body
+        assert "firefox" in body
+        assert "chromium" in body
+        # Concrete strings from each set of steps.
+        assert "Add to Home Screen" in body         # iOS Safari
+        assert "⋮ menu" in body                     # Firefox / Chromium
+
+
+def test_install_button_falls_back_to_help_modal_when_no_native_prompt():
+    """When no `beforeinstallprompt` was captured, the show() function
+    must NOT silently no-op — it should open the help modal so users
+    on Firefox / iOS Safari get instructions instead of dead clicks."""
+    with _client() as client:
+        body = client.get("/").text
+        # The JS path: `if (p) { p.prompt() } else { lbInstallShowHelp() }`
+        assert "lbInstallShowHelp" in body
+        assert "p.prompt()" in body
+
+
+def test_install_button_hides_once_app_is_already_installed():
+    with _client() as client:
+        body = client.get("/").text
+        # Standards-compliant + legacy iOS detection.
+        assert "display-mode: standalone" in body
+        assert "navigator.standalone" in body
