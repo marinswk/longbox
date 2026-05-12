@@ -345,6 +345,132 @@ def test_backfill_always_fills_source_only_fields_even_without_force():
         assert comic.title == "SrcOnly"
 
 
+# ─────────────  Series auto-enrichment on save  ───────────── #
+
+
+def test_series_enrichment_pulls_expected_issues_for_wookieepedia():
+    """After save, a freshly-created series row should pick up
+    source/source_id/expected_issues in the background so the series
+    detail page shows the missing-issues list without the user having
+    to manually trigger /series/{id}/refresh."""
+    import asyncio
+    from unittest.mock import patch
+    from app.models import Series
+
+    fake_issues = ["Article: Series #1", "Article: Series #2", "Article: Series #3"]
+
+    async def fake_get_series_issues(title: str) -> list[str]:
+        return fake_issues
+
+    with patch(
+        "app.services.wookieepedia.get_series_issues",
+        side_effect=fake_get_series_issues,
+    ):
+        from app.routers.add import _enrich_series_from_candidate
+        # Seed: save a comic so we have a series row to enrich.
+        with _client() as client:
+            cid = _save(client, title="Enr A", isbn_13="9789000001101",
+                        series="EnrSeries-1101", publisher="EnrPub")
+            comic = _comic(cid)
+            sid = comic.series_id
+
+            asyncio.run(_enrich_series_from_candidate(
+                sid, "wookieepedia", "EnrSeries-1101", None,
+            ))
+
+            async def _load_series():
+                async with SessionLocal() as session:
+                    return await session.get(Series, sid)
+            series = asyncio.run(_load_series())
+            assert series.source == "wookieepedia"
+            assert series.source_id == "EnrSeries-1101"
+            assert series.expected_issues
+            assert "Article: Series #1" in series.expected_issues
+
+
+def test_series_enrichment_skips_when_already_enriched():
+    """Idempotent: a series that already has source + expected_issues
+    should not be touched (manual refresh remains the right tool)."""
+    import asyncio
+    from unittest.mock import patch
+    from app.models import Series
+
+    called = {"n": 0}
+
+    async def fake_get_series_issues(title: str) -> list[str]:
+        called["n"] += 1
+        return ["should not be saved"]
+
+    with patch(
+        "app.services.wookieepedia.get_series_issues",
+        side_effect=fake_get_series_issues,
+    ):
+        from app.routers.add import _enrich_series_from_candidate
+        with _client() as client:
+            cid = _save(client, title="EnrIdem", isbn_13="9789000001201",
+                        series="EnrIdem-1201", publisher="EnrPub")
+            comic = _comic(cid)
+            sid = comic.series_id
+
+            # Pre-fill so enrichment should be a no-op.
+            async def _seed():
+                async with SessionLocal() as session:
+                    series = await session.get(Series, sid)
+                    series.source = "wookieepedia"
+                    series.source_id = "Manual"
+                    series.expected_issues = "Existing #1"
+                    session.add(series)
+                    await session.commit()
+            asyncio.run(_seed())
+
+            asyncio.run(_enrich_series_from_candidate(
+                sid, "wookieepedia", "EnrIdem-1201", None,
+            ))
+
+            async def _load_series():
+                async with SessionLocal() as session:
+                    return await session.get(Series, sid)
+            series = asyncio.run(_load_series())
+            # Untouched.
+            assert series.source_id == "Manual"
+            assert series.expected_issues == "Existing #1"
+            assert called["n"] == 0
+
+
+def test_series_enrichment_no_op_when_fetcher_returns_empty():
+    """If upstream returns no issues (article doesn't exist, anthology
+    page, etc.) we leave the series in its bare state — the refresh
+    form is still available if the user wants to try a different
+    source_id."""
+    import asyncio
+    from unittest.mock import patch
+    from app.models import Series
+
+    async def fake_get_series_issues(title: str) -> list[str]:
+        return []
+
+    with patch(
+        "app.services.wookieepedia.get_series_issues",
+        side_effect=fake_get_series_issues,
+    ):
+        from app.routers.add import _enrich_series_from_candidate
+        with _client() as client:
+            cid = _save(client, title="EnrEmpty", isbn_13="9789000001301",
+                        series="EnrEmpty-1301", publisher="EnrPub")
+            comic = _comic(cid)
+            sid = comic.series_id
+
+            asyncio.run(_enrich_series_from_candidate(
+                sid, "wookieepedia", "EnrEmpty-1301", None,
+            ))
+
+            async def _load_series():
+                async with SessionLocal() as session:
+                    return await session.get(Series, sid)
+            series = asyncio.run(_load_series())
+            assert series.expected_issues in (None, "")
+
+
 def test_backfill_does_not_clobber_user_edited_title_when_not_forced():
     """The flip side: title IS a confirm-form field, so save flow must
     respect a user-set title even if the candidate has its own."""

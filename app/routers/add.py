@@ -187,6 +187,85 @@ async def _download_and_store_cover(comic_id: int, remote_url: str) -> None:
         await session.commit()
 
 
+async def _enrich_series_from_candidate(
+    series_id: int, source: str, candidate_series: Optional[str],
+    candidate_raw: Optional[dict],
+) -> None:
+    """Best-effort background fill of `Series.source` / `Series.source_id`
+    / `Series.expected_issues` using the same upstream the comic came from.
+
+    Without this, /add/save creates a bare Series row (just name +
+    publisher_id), leaving the series detail page without a missing-
+    issues list until the user manually pastes a source_id into the
+    /series/{id}/refresh form. Doing it here matches what the user
+    expects when they save a single-issue article into a new series.
+
+    Source rules:
+      - wookieepedia: `candidate.series` IS an article title most of the
+        time. Try `get_series_issues(title)`; it parses the wiki article
+        and returns the issue list (empty for trade/anthology pages,
+        which is fine — we just skip the write).
+      - comicvine: extract `volume.id` from the raw issue payload and
+        feed it to `get_volume_issues`.
+      - metron: extract `series.id` from the raw issue payload.
+
+    Idempotent: if the Series already has a source AND expected_issues
+    we leave it alone — refresh is the right tool for explicit updates.
+    """
+    if not source or not candidate_series:
+        return
+    async with SessionLocal() as session:
+        series = await session.get(Series, series_id)
+        if series is None:
+            return
+        # Already enriched — let the user use /series/{id}/refresh if
+        # they want to update.
+        if series.source and series.expected_issues:
+            return
+
+        fetcher = None
+        source_id: Optional[str] = None
+        if source == "wookieepedia":
+            fetcher = wookieepedia.get_series_issues
+            source_id = candidate_series  # article title
+        elif source == "comicvine":
+            raw = candidate_raw or {}
+            vol = raw.get("volume") or {}
+            vid = vol.get("id")
+            if vid is not None:
+                from app.services import comicvine as _cv
+                fetcher = _cv.get_volume_issues
+                source_id = str(vid)
+        elif source == "metron":
+            raw = candidate_raw or {}
+            ser = raw.get("series") or {}
+            sid = ser.get("id")
+            if sid is not None:
+                from app.services import metron as _metron
+                fetcher = _metron.get_series_issues
+                source_id = str(sid)
+
+        if fetcher is None or not source_id:
+            return
+        try:
+            issues = await fetcher(source_id)
+        except Exception:
+            # Best-effort: any upstream hiccup leaves the Series in its
+            # bare-bones state. The /series/{id}/refresh form is the
+            # explicit fallback.
+            return
+        if not issues:
+            return
+
+        series.source = source
+        series.source_id = source_id
+        # Don't clobber a manually-entered expected_issues list.
+        if not series.expected_issues:
+            series.expected_issues = "\n".join(issues)
+        session.add(series)
+        await session.commit()
+
+
 @router.get("/add", response_class=HTMLResponse)
 async def add_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "add.html")
@@ -431,6 +510,20 @@ async def add_save(
         if candidate is not None:
             from app.routers.detail import _autotag_from_candidate
             await _autotag_from_candidate(session, comic.id, candidate)
+
+        # Best-effort series enrichment. Fires only for newly-created
+        # series rows where we haven't pulled the upstream issue list
+        # yet — this is what makes /series/{id} render a missing-issues
+        # progress bar after a fresh save, instead of requiring the user
+        # to manually visit the page and paste source/source_id.
+        if candidate is not None and comic.series_id is not None:
+            background.add_task(
+                _enrich_series_from_candidate,
+                comic.series_id,
+                source,
+                candidate.series,
+                candidate.raw,
+            )
 
     price = None
     try:
