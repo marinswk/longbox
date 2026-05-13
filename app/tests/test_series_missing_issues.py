@@ -137,6 +137,101 @@ EDITIONS_WIKITEXT = (
 )
 
 
+# Epic Collection: <gallery> blocks under ===Legends=== / ===Canon===
+# subheadings nested in ==Media==. No Volumes header, no bullet list.
+# This is what fooled the earlier fix — the parser found the Volumes
+# regex didn't match, fell straight to the empty Contents section,
+# and returned [].
+
+EPIC_COLLECTION_GALLERY_WIKITEXT = (
+    "{{Top|rwm|can|leg}}\n"
+    "Some prose.\n"
+    "==Media==\n"
+    "===Legends===\n"
+    "<gallery captionalign=\"center\">\n"
+    "File:LegendsEpicCollection-EmpireVol1.png|''[[Star Wars Legends Epic Collection: The Empire Vol. 1|Star Wars Legends<br />Epic Collection:<br />The Empire Vol. 1]]''<br />[[April 7]], [[2015]]\n"
+    "File:LegendsEpicCollection-NewRepublicVol1.png|''[[Star Wars Legends Epic Collection: The New Republic Vol. 1|Star Wars Legends<br />Epic Collection:<br />The New Republic Vol. 1]]''<br />[[May 12]], 2015\n"
+    "</gallery>\n"
+    "===Canon===\n"
+    "<gallery>\n"
+    "File:ModernEra-WarOfTheBountyHuntersVol1.png|''[[Star Wars: Modern Era Epic Collection - War of the Bounty Hunters Vol. 1]]''<br />[[June 18]], [[2024]]\n"
+    "</gallery>\n"
+    "==Sources==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_parses_gallery_blocks_for_epic_collection():
+    """Regression for /series/3: Epic Collection lists its member
+    volumes inside <gallery> blocks under ===Legends=== / ===Canon===
+    subheadings, not bullet lists or a Volumes section. The parser
+    must walk every gallery block in the wikitext."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Epic Collection", "wikitext": {"*": EPIC_COLLECTION_GALLERY_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    # Distinct article title so the MetadataCache from
+    # test_get_series_issues_parses_volumes_section_for_tpb_series
+    # (which also uses "Epic Collection") doesn't leak in.
+    issues = asyncio.run(wookieepedia.get_series_issues("Epic Collection Gallery Probe"))
+    assert issues == [
+        "Star Wars Legends Epic Collection: The Empire Vol. 1",
+        "Star Wars Legends Epic Collection: The New Republic Vol. 1",
+        "Star Wars: Modern Era Epic Collection - War of the Bounty Hunters Vol. 1",
+    ]
+
+
+# Star Wars Omnibus: prettytable rows under ===Installments=== with
+# the volume title in bold-italic, prefixed with `N. ` and wikilinked.
+
+OMNIBUS_TABLE_WIKITEXT = (
+    "{{Top|rwm}}\n"
+    "==Media==\n"
+    "===Installments===\n"
+    "{|{{Prettytable}}\n"
+    "! Cover||Omnibus Title||Pub. Date||Included Story Arcs\n"
+    "|-\n"
+    "|rowspan=\"4\"|[[File:Cover1.jpg|100px]]||rowspan=\"4\"|'''''1. [[Star Wars Omnibus: X-Wing Rogue Squadron Volume 1]]'''''||rowspan=\"4\"|[[June 7]], [[2006]]||''[[Star Wars: X-Wing: Rogue Leader]]''\n"
+    "|-\n"
+    "|''[[Star Wars: X-Wing Rogue Squadron: The Rebel Opposition]]''\n"
+    "|-\n"
+    "|rowspan=\"4\"|[[File:Cover2.jpg|100px]]||rowspan=\"4\"|'''''2. [[Star Wars Omnibus: X-Wing Rogue Squadron Volume 2]]'''''||rowspan=\"4\"|[[October 25]], [[2006]]||''[[Other Arc]]''\n"
+    "|}\n"
+    "==Sources==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_parses_numbered_prettytable_for_omnibus():
+    """Regression for /series/4: Star Wars Omnibus uses a wikitable
+    where each volume is `'''''N. [[Article]]'''''`. The story-arc
+    wikilinks in adjacent cells must NOT leak into the result —
+    only the bold-italic numbered titles are volume articles."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Star Wars Omnibus", "wikitext": {"*": OMNIBUS_TABLE_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("Star Wars Omnibus"))
+    assert issues == [
+        "Star Wars Omnibus: X-Wing Rogue Squadron Volume 1",
+        "Star Wars Omnibus: X-Wing Rogue Squadron Volume 2",
+    ]
+
+
 @respx.mock
 def test_get_series_issues_recognises_editions_header_variant():
     """Alternate heading: some Wookieepedia trade series use

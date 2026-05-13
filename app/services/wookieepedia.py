@@ -326,9 +326,9 @@ _SERIES_ISSUES_HEADERS = re.compile(
 # Trade-paperback / collection series like "Epic Collection",
 # "Marvel Omnibus", "Marvel Modern Era" list their member volumes
 # under headings like ==Volumes==, ==Editions==, ==Trade paperbacks==,
-# ==Books==, ==Releases==, ==Collections==. None of those match the
-# "Issues" regex above, which is why TPB series rendered with an
-# empty expected-issues list until now.
+# ==Books==, ==Releases==, ==Collections==, ==Installments==. None of
+# those match the "Issues" regex above, which is why TPB series
+# rendered with an empty expected-issues list until now.
 _SERIES_VOLUMES_HEADERS = re.compile(
     r"^={2,3}\s*"
     r"(?:List\s+of\s+)?"
@@ -341,9 +341,41 @@ _SERIES_VOLUMES_HEADERS = re.compile(
     r"|Collections?"
     r"|Omnibuses?"
     r"|Hardcovers?"
+    r"|Installments?"
     r")\s*={2,3}\s*$",
     re.MULTILINE | re.IGNORECASE,
 )
+
+# Prettytable / wikitable rows in TPB series articles (most notably
+# Star Wars Omnibus) format each volume as:
+#   |rowspan="4"|'''''1. [[Article Title]]'''''
+# Match the number + period + opening wikilink so we pick up the
+# article title without dragging in collected story-arc wikilinks
+# from sibling cells. Anchored to `^|\|` to dodge stray matches in
+# prose ("section 1. The introduction..." is too rare to worry about
+# but the anchor costs us nothing).
+_NUMBERED_VOLUME_RX = re.compile(
+    r"(?:^|\|)\s*'*\s*\d+\.\s*'*\s*\[\[([^\]\|]+)",
+    re.MULTILINE,
+)
+
+
+def _extract_numbered_volume_links(wikitext: str) -> list[str]:
+    """Find wikitable rows of the shape `N. [[Article]]` and return
+    each Article in first-seen order. De-duplicates so an article
+    appearing in multiple table rows (rare but possible) lists once."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _NUMBERED_VOLUME_RX.finditer(wikitext):
+        title = m.group(1).strip()
+        low = title.lower()
+        if low.startswith(("file:", "image:", "category:")):
+            continue
+        if title in seen:
+            continue
+        seen.add(title)
+        out.append(title)
+    return out
 _NEXT_HEADING_OR_TABLE_END = re.compile(
     r"^(?:={2,3}[^=]|\{\{Comictable-end)", re.MULTILINE
 )
@@ -463,6 +495,52 @@ def _extract_contents_section(wikitext: str) -> list[str]:
     don't get silently dropped.
     """
     return _extract_section_bullets(wikitext, _CONTENTS_HEADER)
+
+
+# TPB-series articles like Epic Collection, Star Wars Omnibus, and
+# Modern Era list their member volumes inside `<gallery>` blocks
+# (typically under ==Media==/===Legends===/===Canon=== subheadings)
+# rather than bullet lists. Each gallery line is:
+#   File:CoverArt.png|''[[Article Title|Display Text]]''<br />...
+# The first wikilink on the line is the article we want; subsequent
+# wikilinks are dates / authors / footnote refs we should ignore.
+_GALLERY_BLOCK = re.compile(
+    r"<gallery\b[^>]*>(.*?)</gallery>", re.DOTALL | re.IGNORECASE
+)
+
+
+def _extract_gallery_links(wikitext: str) -> list[str]:
+    """Pull the first wikilinked article title from each line inside
+    every `<gallery>` block in `wikitext`. De-duplicates while
+    preserving first-seen order so a volume that appears in both
+    ===Legends=== and ===Canon=== galleries doesn't show up twice.
+    Lines whose first wikilink points at a `File:` / `Image:` asset
+    are skipped — those are the gallery's image declarations, not
+    article links."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for block in _GALLERY_BLOCK.finditer(wikitext):
+        body = block.group(1)
+        for raw in body.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            # First wikilink on the line — that's the article title in
+            # the gallery convention `File:X.png|''[[Article|...]]''`.
+            m = _LINK_ARTICLE.search(line)
+            if not m:
+                continue
+            title = m.group(1).strip()
+            # Defensive: a malformed line might wikilink the image
+            # itself. Skip namespace prefixes that aren't articles.
+            low = title.lower()
+            if low.startswith(("file:", "image:", "category:")):
+                continue
+            if title in seen:
+                continue
+            seen.add(title)
+            out.append(title)
+    return out
 
 
 def _split_multivalue(raw: str) -> list[str]:
@@ -708,14 +786,40 @@ async def get_series_issues(article_title: str) -> list[str]:
             return items
 
     # Path 2: TPB / omnibus / epic-collection series. Volumes are
-    # almost always bullet-listed (one volume per line, wikilinked to
-    # the volume's own article). The Comictable template is for
-    # single issues so we don't try it here.
+    # listed under ==Volumes== / ==Editions== / ==Installments== etc.
+    # Try the three common shapes in turn: plain bullet list (typical
+    # old-style articles), then a numbered prettytable (Star Wars
+    # Omnibus), then a <gallery> block scoped to the section
+    # (Epic Collection's ===Legends===/===Canon=== subheadings live
+    # under ==Media==, so a section-scoped gallery search wins when
+    # the Volumes heading is present).
     body = _section_body(wikitext, _SERIES_VOLUMES_HEADERS)
     if body is not None:
         items = _extract_bullet_targets(body)
         if items:
             return items
+        items = _extract_numbered_volume_links(body)
+        if items:
+            return items
+        items = _extract_gallery_links(body)
+        if items:
+            return items
 
-    # Path 3: trade-issue contents fallback.
+    # Path 3: gallery-based articles that DON'T put their galleries
+    # under a Volumes-style heading (Epic Collection puts them under
+    # ==Media==/===Legends===/===Canon=== with no top-level Volumes
+    # section). Scan every gallery block in the whole wikitext.
+    gallery_items = _extract_gallery_links(wikitext)
+    if gallery_items:
+        return gallery_items
+
+    # Path 4: numbered-table TPB-series articles without a Volumes
+    # heading (Star Wars Omnibus uses ===Installments=== which IS in
+    # _SERIES_VOLUMES_HEADERS now, but keep the whole-doc fallback
+    # for variants we haven't catalogued).
+    numbered_items = _extract_numbered_volume_links(wikitext)
+    if numbered_items:
+        return numbered_items
+
+    # Path 5: trade-issue contents fallback.
     return _extract_contents_section(wikitext)
