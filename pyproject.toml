@@ -15,6 +15,10 @@ dependencies = [
     "greenlet>=3.1",
     "httpx>=0.27",
     "alembic>=1.14",
+    # Used to render PNG variants of the SVG app icon. Firefox /
+    # older Safari / many Android launchers don't accept the SVG
+    # icon in a PWA manifest — they need explicit PNG sizes.
+    "pillow>=10.4",
 ]
 
 [dependency-groups]

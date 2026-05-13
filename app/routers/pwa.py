@@ -1,10 +1,14 @@
-"""PWA endpoints — web manifest + service worker.
+"""PWA endpoints — web manifest + service worker + raster icons.
 
-Both are served dynamically rather than as static files so the values
-stay in sync with whatever the app is currently themed to.
+Manifest and SW are served dynamically (not as static files) so the
+values stay in sync with the app theme. Icons are rendered from
+Python (Pillow) so we can produce any pixel size on demand without
+checking PNG binaries into git or bundling them in the image.
 
-  GET /manifest.webmanifest   — PWA install metadata
-  GET /sw.js                  — service worker JS (root-scoped)
+  GET /manifest.webmanifest         — PWA install metadata
+  GET /sw.js                        — service worker JS (root-scoped)
+  GET /icons/icon-{size}.png        — purpose=any icon PNG
+  GET /icons/maskable-{size}.png    — purpose=maskable icon PNG
 
 The service worker uses a network-first strategy for HTML navigation
 (so a fresh deploy is picked up on the next page load) and a
@@ -15,10 +19,52 @@ once downloaded — perfect cache candidates). POST/PUT/DELETE and
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
+
+from app.services.icons import render_icon
 
 router = APIRouter(tags=["pwa"])
+
+
+# Sizes referenced by the manifest + apple-touch-icon meta. We keep
+# the list short on purpose — every entry costs the browser a fetch
+# during install. 192 + 512 are the Chromium/Firefox minimums;
+# 180 is what iOS Safari reads for the apple-touch-icon; 512 doubles
+# as the launcher splash on Android.
+_VALID_SIZES = {72, 96, 128, 144, 152, 180, 192, 256, 384, 512}
+
+
+@router.get("/icons/icon-{size}.png")
+async def icon_png(size: int) -> Response:
+    """Return the `purpose=any` icon rendered as PNG at `{size}` px.
+    Browsers fetch one of these per manifest entry on install."""
+    if size not in _VALID_SIZES:
+        raise HTTPException(status_code=404, detail="unsupported icon size")
+    png = render_icon("any", size)
+    return Response(
+        content=png,
+        media_type="image/png",
+        # Icons are immutable for the life of a deployment. Long cache
+        # keeps the install flow snappy; bumping the manifest URL is
+        # the escape hatch if the icon ever changes.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/icons/maskable-{size}.png")
+async def maskable_png(size: int) -> Response:
+    """Return the `purpose=maskable` icon rendered as PNG at `{size}` px.
+    Android's adaptive-icon framework clips this with circular,
+    rounded-square, etc. masks."""
+    if size not in _VALID_SIZES:
+        raise HTTPException(status_code=404, detail="unsupported icon size")
+    png = render_icon("maskable", size)
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.get("/manifest.webmanifest")
@@ -39,20 +85,41 @@ async def manifest() -> JSONResponse:
             "background_color": "#faf6ec",
             "theme_color": "#0a0e1a",
             "icons": [
-                # A single SVG covers every browser that supports it (every
-                # modern engine + iOS 13+). `purpose: any` is the default;
-                # the maskable variant is a separate entry below.
+                # Multi-size PNG entries are what Firefox / older Safari
+                # / many Android launchers actually USE for the installed
+                # app icon — SVG support in PWA manifests is patchy
+                # across browsers. We list 192 + 512 for both purposes
+                # plus the SVG as a bonus for engines that DO support
+                # it (Chrome / Edge use it for the install prompt).
+                {
+                    "src": "/icons/icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "any",
+                },
+                {
+                    "src": "/icons/icon-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "any",
+                },
+                {
+                    "src": "/icons/maskable-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "maskable",
+                },
+                {
+                    "src": "/icons/maskable-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "maskable",
+                },
                 {
                     "src": "/static/icons/icon.svg",
                     "sizes": "any",
                     "type": "image/svg+xml",
                     "purpose": "any",
-                },
-                {
-                    "src": "/static/icons/maskable.svg",
-                    "sizes": "any",
-                    "type": "image/svg+xml",
-                    "purpose": "maskable",
                 },
             ],
             # Shortcuts surfaced in the OS launcher when long-pressing
@@ -80,6 +147,10 @@ const PRECACHE_URLS = [
   "/",
   "/static/icons/icon.svg",
   "/static/icons/maskable.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/maskable-192.png",
+  "/icons/maskable-512.png",
 ];
 
 self.addEventListener("install", (event) => {

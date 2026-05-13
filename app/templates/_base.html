@@ -10,11 +10,16 @@
        browsers and the "Add to Home Screen" experience on iOS Safari. #}
     <link rel="manifest" href="/manifest.webmanifest" />
 
-    {# Favicon + iOS home-screen icon. SVG is honored by every modern
-       engine (incl. iOS 13+); shipping a single asset keeps the repo
-       free of binary blobs. #}
+    {# Favicon + iOS home-screen icon. SVG covers desktop browsers
+       that support it (Chrome / Edge / Firefox desktop, Safari 14+).
+       iOS Safari's `apple-touch-icon` and the Windows `msapplication-
+       TileImage` paths only accept PNG — they're served by the
+       on-the-fly raster route. #}
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg" />
-    <link rel="apple-touch-icon" href="/static/icons/icon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <meta name="msapplication-TileImage" content="/icons/icon-192.png" />
+    <meta name="msapplication-TileColor" content="#0a0e1a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Longbox" />
