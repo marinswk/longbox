@@ -371,6 +371,48 @@ async def series_auto_link(
             detail=f"{exc.source} is rate-limited ({exc.detail}) — try again later",
         ) from exc
 
+    # Wookieepedia-specific fallback: the bare series name often points
+    # at a franchise / TV-show / publishing-initiative overview article
+    # (e.g. "Star Wars: The High Republic" is the multi-media franchise
+    # page; the actual comic series lives at "Star Wars: The High
+    # Republic (2021)"). When the bare-name fetch is empty, try the
+    # year-disambiguated form using the earliest cover-date year of
+    # any owned comic in this series, plus a couple of nearby years to
+    # cover off-by-one launches (cover-date Jan often = pub-date Dec
+    # of the prior year).
+    if not issues and src == "wookieepedia":
+        year_row = (await session.exec(
+            select(func.min(func.strftime("%Y", Comic.cover_date)))
+            .where(
+                Comic.series_id == series_id,
+                Comic.cover_date.is_not(None),
+            )
+        )).first()
+        anchor = year_row[0] if isinstance(year_row, tuple) else year_row
+        try:
+            anchor_year = int(anchor) if anchor else None
+        except (TypeError, ValueError):
+            anchor_year = None
+        if anchor_year is not None:
+            tried: list[str] = []
+            # Try the exact year first, then ±1. Wookieepedia uses the
+            # *first publication year* for the disambiguator, but
+            # cover-date can lag by a month or two so the next-younger
+            # year is the second-most-likely match.
+            for offset in (0, -1, 1, -2, 2):
+                candidate = f"{sid} ({anchor_year + offset})"
+                if candidate in tried:
+                    continue
+                tried.append(candidate)
+                try:
+                    candidate_issues = await fetcher(candidate)
+                except UpstreamRateLimit:
+                    break
+                if candidate_issues:
+                    sid = candidate
+                    issues = candidate_issues
+                    break
+
     if not issues:
         raise HTTPException(
             status_code=502,

@@ -169,6 +169,61 @@ def test_auto_link_returns_422_when_no_comic_has_a_source():
         assert "auto-detect" in r.json()["detail"].lower()
 
 
+def test_auto_link_falls_back_to_year_disambiguation():
+    """Regression: when the bare series name resolves to a franchise /
+    TV-show / publishing-initiative article on Wookieepedia (no
+    comic-series structure), the auto-link must try the
+    `Series (YEAR)` disambiguated form using the earliest cover-date
+    year of any owned comic.
+
+    Scenario mirrors `/series/4` on the deployed app: comics live
+    under series.name = "Star Wars: The High Republic" but the
+    Wookieepedia comic-series article is "Star Wars: The High Republic
+    (2021)" — the bare title points at the multi-media franchise
+    overview, which `get_series_issues` rightly returns empty for."""
+    from unittest.mock import patch
+
+    call_log: list[str] = []
+
+    async def fake(title: str) -> list[str]:
+        call_log.append(title)
+        # Only the disambiguated form has issues.
+        if "(2021)" in title:
+            return ["THR (2021) 1", "THR (2021) 2", "THR (2021) 3"]
+        return []
+
+    with patch.dict("app.routers.series._FETCHERS", {"wookieepedia": fake}):
+        with _client() as client:
+            cid = _save(client, title="THR Probe",
+                        isbn_13="9789000003101",
+                        series="Star Wars: The High Republic",
+                        publisher="AL Pub",
+                        cover_date="2021-03-15")
+            comic = _comic(cid)
+            _set_comic_source(cid, "wookieepedia", "THR Probe issue 1")
+            async def _clear_series():
+                async with SessionLocal() as session:
+                    s = await session.get(Series, comic.series_id)
+                    s.source = None
+                    s.source_id = None
+                    s.expected_issues = None
+                    session.add(s)
+                    await session.commit()
+            asyncio.run(_clear_series())
+
+            r = client.post(f"/series/{comic.series_id}/auto-link")
+            assert r.status_code == 204
+            series = _series(comic.series_id)
+            # source_id should be the disambiguated form, not the bare
+            # name — so subsequent refreshes hit the right article.
+            assert series.source_id == "Star Wars: The High Republic (2021)"
+            assert "THR (2021) 1" in series.expected_issues
+            # The bare name should have been tried FIRST, then the
+            # year-disambiguated forms in order.
+            assert call_log[0] == "Star Wars: The High Republic"
+            assert "Star Wars: The High Republic (2021)" in call_log
+
+
 def test_auto_link_returns_502_when_upstream_has_no_issues():
     """The series name doesn't always match a wiki article. When the
     fetcher returns an empty list the endpoint should bubble up a 502
