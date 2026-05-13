@@ -299,14 +299,45 @@ async def series_auto_link(
                    "form to specify one.",
         )
 
+    # Track whether we derived sid from a high-confidence source
+    # (a child comic's actual wiki infobox) vs the lower-confidence
+    # `series.name` fallback. The year-disambiguation block below
+    # only runs against the low-confidence path, to avoid producing
+    # plausible-but-wrong matches like landing on "Series (2023)" when
+    # the right answer was "Series (2021)".
+    sid_from_child_refetch = False
+
     # Derive a series-level source_id when one wasn't stored.
     if not sid:
         if src == "wookieepedia":
-            # On Wookieepedia the series-article title is usually just
-            # the series name. `get_series_issues` parses the Issues
-            # section; if the wiki uses a disambiguated title we'll get
-            # back an empty list and surface a 502.
-            sid = series.name
+            # Don't trust `series.name` blindly. Legacy series rows
+            # often have a too-broad franchise name (e.g. "Star Wars:
+            # The High Republic") because of an earlier
+            # series-infobox-parsing bug that picked the level-1 bullet
+            # instead of the more-specific level-2. Refetch a child
+            # comic and read the (now-correctly-parsed) `candidate.series`
+            # field for the canonical series-article title. Falls back
+            # to `series.name` only when no child comic has a
+            # wookieepedia source_id we can dereference.
+            child = (await session.exec(
+                select(Comic)
+                .where(
+                    Comic.series_id == series_id,
+                    Comic.source == "wookieepedia",
+                    Comic.source_id.is_not(None),
+                )
+                .limit(1)
+            )).first()
+            if child and child.source_id:
+                try:
+                    cand = await wookieepedia.get_article(child.source_id)
+                except Exception:
+                    cand = None
+                if cand and cand.series:
+                    sid = cand.series
+                    sid_from_child_refetch = True
+            if not sid:
+                sid = series.name
         elif src == "comicvine":
             # Refetch one child comic's issue payload to read the
             # volume id off it. We pick any comic with a source_id
@@ -380,7 +411,7 @@ async def series_auto_link(
     # any owned comic in this series, plus a couple of nearby years to
     # cover off-by-one launches (cover-date Jan often = pub-date Dec
     # of the prior year).
-    if not issues and src == "wookieepedia":
+    if not issues and src == "wookieepedia" and not sid_from_child_refetch:
         year_row = (await session.exec(
             select(func.min(func.strftime("%Y", Comic.cover_date)))
             .where(

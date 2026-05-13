@@ -128,6 +128,53 @@ def test_get_series_issues_parses_volumes_section_for_tpb_series():
     ]
 
 
+# Hierarchical `series=` infobox: level-1 is the broad franchise,
+# level-2 is the specific comic series the issue belongs to. The
+# parser must pick the level-2 entry, not the franchise — otherwise
+# /series/{id} ends up linked to a multimedia-overview wiki article
+# with no Issues/Volumes section to extract.
+
+HIERARCHICAL_SERIES_WIKITEXT = (
+    "{{Top|rwm}}\n"
+    "{{ComicCollection\n"
+    "|title=''Monster of Temple Peak and Other Stories''\n"
+    "|publisher=[[Dark Horse Comics]]\n"
+    "|media type=Trade paperback\n"
+    "|series=*''[[Star Wars: The High Republic]]'' {{C|[[Phase I: Light of the Jedi|Phase I]]}}\n"
+    "**''[[Star Wars: The High Republic Adventures — The Monster of Temple Peak]]''\n"
+    "**[[Star Wars: The High Republic Adventures (2021)|''Star Wars: The High Republic Adventures'' (2021)]]\n"
+    "}}\n"
+    "Some prose.\n"
+)
+
+
+@respx.mock
+def test_candidate_picks_specific_series_from_hierarchical_infobox():
+    """Regression for /series/4: the TPB infobox's `series=` field is
+    a nested bullet list. Level-1 (`*`) is the broad franchise; level-2
+    (`**`) is the specific comic series. We need the level-2 entry,
+    otherwise the series gets linked to a multimedia franchise article
+    that has no comic-series structure to parse."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Monster of Temple Peak and Other Stories",
+                          "wikitext": {"*": HIERARCHICAL_SERIES_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    cand = asyncio.run(
+        wookieepedia.get_article("Monster of Temple Peak and Other Stories")
+    )
+    assert cand is not None
+    # Specific level-2 entry — NOT the level-1 franchise.
+    assert cand.series == "Star Wars: The High Republic Adventures — The Monster of Temple Peak"
+
+
 EDITIONS_WIKITEXT = (
     "{{Top}}\n"
     "==Editions==\n"

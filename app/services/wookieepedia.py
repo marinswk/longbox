@@ -121,6 +121,62 @@ def _first_line(value: Optional[str]) -> Optional[str]:
     return None
 
 
+def _pick_specific_series(raw: Optional[str]) -> Optional[str]:
+    """Pick the most-specific series article title from a Wookieepedia
+    `series=` infobox value's RAW wikitext (before `_clean()` stripped
+    the bullets and wikilinks).
+
+    Wookieepedia encodes series hierarchy as nested bullets:
+        *''[[Franchise / Imprint]]''
+        **''[[Specific comic series]]''
+        **''[[Sibling sub-series]]''
+        ***''[[Companion volume]]''
+
+    Level 1 (`*`) is typically the broad publishing initiative or
+    franchise — its wiki article is a multimedia overview with no
+    Issues/Volumes section, useless for issue-list extraction. Level 2
+    (`**`) is the actual comic series the issue belongs to. We want
+    that.
+
+    Strategy: pick the first wikilinked article title at the DEEPEST
+    bullet level present. Falls back to a plain wikilink anywhere in
+    the value, then `None` so the caller can use `_first_line` on the
+    pre-cleaned text.
+    """
+    if not raw:
+        return None
+    levels: dict[int, list[str]] = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("*"):
+            continue
+        bullets_m = re.match(r"^(\*+)", stripped)
+        if not bullets_m:
+            continue
+        level = len(bullets_m.group(1))
+        rest = stripped[level:].lstrip().lstrip("'")  # drop bold/italic
+        m = re.search(r"\[\[([^\]\|]+)", rest)
+        if m:
+            title = m.group(1).strip()
+            # Skip File:/Image:/Category: namespace links.
+            low = title.lower()
+            if low.startswith(("file:", "image:", "category:")):
+                continue
+            levels.setdefault(level, []).append(title)
+    if not levels:
+        # No bullets at all — fall back to the first wikilink anywhere.
+        m = re.search(r"\[\[([^\]\|]+)", raw)
+        if m:
+            return m.group(1).strip()
+        return None
+    # Prefer level 2 (the specific series). If there's no level-2,
+    # fall back to whatever deepest level exists.
+    if 2 in levels:
+        return levels[2][0]
+    deepest = max(levels.keys())
+    return levels[deepest][0]
+
+
 def _find_infobox(wikitext: str) -> Optional[dict[str, str]]:
     """Walk top-level templates and return the first ComicBook/ComicCollection
     one as a {param_name: cleaned_value} dict. None if not found.
@@ -146,7 +202,16 @@ def _find_infobox(wikitext: str) -> Optional[dict[str, str]]:
                     if "=" not in raw:
                         continue
                     key, _, val = raw.partition("=")
-                    fields[key.strip().lower()] = _clean(val)
+                    key_lower = key.strip().lower()
+                    fields[key_lower] = _clean(val)
+                    # Stash raw (un-cleaned) values for fields where
+                    # bullet hierarchy or wikilink markup carries
+                    # semantics that `_clean` flattens away.
+                    # `series=` uses nested bullets to encode franchise →
+                    # specific series, and `_pick_specific_series`
+                    # needs the bullets intact.
+                    if key_lower == "series":
+                        fields["__series_raw__"] = val
                 fields["__template__"] = head.strip()
                 return fields
             i = j
@@ -652,7 +717,14 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     # first non-empty line so the saved Series / Comic carry a clean,
     # single-line name regardless of the upstream wiki shape.
     title_clean = _first_line(fields.get("title")) or parsed.get("title") or title
-    series = _first_line(fields.get("series"))
+    # Prefer the deepest-nested wikilinked entry from the RAW series
+    # field — that's the specific comic series. Fall back to the
+    # cleaned first-line value if the raw form has no usable bullets
+    # (older articles with a plain string).
+    series = (
+        _pick_specific_series(fields.get("__series_raw__"))
+        or _first_line(fields.get("series"))
+    )
     publisher = _first_line(fields.get("publisher"))
 
     # Trade collections list their contents either inside |issues= on the
