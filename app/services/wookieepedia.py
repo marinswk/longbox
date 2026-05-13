@@ -322,6 +322,28 @@ _SERIES_ISSUES_HEADERS = re.compile(
     r"^={2,3}\s*(?:List\s+of\s+)?(?:Single[- ])?Issues\s*={2,3}\s*$",
     re.MULTILINE | re.IGNORECASE,
 )
+
+# Trade-paperback / collection series like "Epic Collection",
+# "Marvel Omnibus", "Marvel Modern Era" list their member volumes
+# under headings like ==Volumes==, ==Editions==, ==Trade paperbacks==,
+# ==Books==, ==Releases==, ==Collections==. None of those match the
+# "Issues" regex above, which is why TPB series rendered with an
+# empty expected-issues list until now.
+_SERIES_VOLUMES_HEADERS = re.compile(
+    r"^={2,3}\s*"
+    r"(?:List\s+of\s+)?"
+    r"(?:Volumes?"
+    r"|Editions?"
+    r"|Trade\s+paperbacks?"
+    r"|Trades"
+    r"|Books"
+    r"|Releases"
+    r"|Collections?"
+    r"|Omnibuses?"
+    r"|Hardcovers?"
+    r")\s*={2,3}\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
 _NEXT_HEADING_OR_TABLE_END = re.compile(
     r"^(?:={2,3}[^=]|\{\{Comictable-end)", re.MULTILINE
 )
@@ -652,24 +674,30 @@ async def get_article(title: str) -> Optional[LookupCandidate]:
 
 
 async def get_series_issues(article_title: str) -> list[str]:
-    """Fetch the issue list off a *series* article (not a single issue).
+    """Fetch the issue (or volume) list off a *series* article.
 
-    Strategy:
-      1. Find the Issues section (==Issues== or ===Issues===, plus the
-         "List of issues" / "Single issues" aliases).
-      2. Inside it, prefer the modern `{{Comictable-issue|…}}` template
-         shape (level-3 heading nested under ==Media==).
-      3. Fall back to a plain bullet list for older articles.
-      4. Last resort: a `==Contents==` section (mostly for trades).
+    Strategy, in order:
+      1. ==Issues== / ===Issues=== (with "List of" / "Single" aliases).
+         Inside, prefer the modern `{{Comictable-issue|…}}` template
+         shape (nested under ==Media== on newer articles); fall back to
+         a plain bullet list for older articles.
+      2. ==Volumes== / ==Editions== / ==Trade paperbacks== etc. for
+         TPB-series articles like "Epic Collection" or "Marvel
+         Omnibus", which list their member volumes under those
+         headings instead of an "Issues" section.
+      3. ==Contents== section as a last resort (mostly for individual
+         trade articles, not series).
 
-    Returns the article titles of every issue, in upstream order. Empty
-    list if the article doesn't exist or has no recognisable section.
+    Returns the article titles of every entry, in upstream order.
+    Empty list if the article doesn't exist or has no recognisable
+    section.
     """
     parsed = await _parse_page(article_title)
     if not parsed:
         return []
     wikitext = (parsed.get("wikitext") or {}).get("*") or ""
 
+    # Path 1: single-issue series.
     body = _section_body(wikitext, _SERIES_ISSUES_HEADERS)
     if body is not None:
         items = _extract_comictable_issues(body)
@@ -679,4 +707,15 @@ async def get_series_issues(article_title: str) -> list[str]:
         if items:
             return items
 
+    # Path 2: TPB / omnibus / epic-collection series. Volumes are
+    # almost always bullet-listed (one volume per line, wikilinked to
+    # the volume's own article). The Comictable template is for
+    # single issues so we don't try it here.
+    body = _section_body(wikitext, _SERIES_VOLUMES_HEADERS)
+    if body is not None:
+        items = _extract_bullet_targets(body)
+        if items:
+            return items
+
+    # Path 3: trade-issue contents fallback.
     return _extract_contents_section(wikitext)

@@ -81,6 +81,81 @@ def test_get_series_issues_parses_issues_section():
     ]
 
 
+# TPB / collection series like "Epic Collection" or "Marvel Omnibus"
+# don't have an ==Issues== section — their volumes live under
+# ==Volumes==, ==Editions==, ==Trade paperbacks==, etc. The parser
+# falls through to the volumes-headers branch for these.
+
+EPIC_COLLECTION_WIKITEXT = (
+    "{{Top|rwm|can|leg}}\n"
+    "{{ComicSeries\n"
+    "|title=''Star Wars: Epic Collection''\n"
+    "|publisher=[[Marvel Comics]]\n"
+    "}}\n"
+    "Some intro prose.\n"
+    "==Volumes==\n"
+    "*[[Star Wars: Epic Collection - Vintage Vol. 1|Vintage Vol. 1]]\n"
+    "*[[Star Wars: Epic Collection - Tales of the Jedi Vol. 1]]\n"
+    "*[[Star Wars: Epic Collection - The Original Marvel Years Vol. 1]]\n"
+    "==See also==\n"
+    "*Other thing\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_parses_volumes_section_for_tpb_series():
+    """Regression: TPB-collection series on Wookieepedia list their
+    member volumes under ==Volumes== instead of ==Issues==. Without
+    this branch the series detail page showed a blank
+    expected-issues list for Epic Collection / Marvel Omnibus /
+    Modern Era / similar TPB-series articles."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Epic Collection", "wikitext": {"*": EPIC_COLLECTION_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("Epic Collection"))
+    assert issues == [
+        "Star Wars: Epic Collection - Vintage Vol. 1",
+        "Star Wars: Epic Collection - Tales of the Jedi Vol. 1",
+        "Star Wars: Epic Collection - The Original Marvel Years Vol. 1",
+    ]
+
+
+EDITIONS_WIKITEXT = (
+    "{{Top}}\n"
+    "==Editions==\n"
+    "*[[Foo Trade Vol. 1]]\n"
+    "*[[Foo Trade Vol. 2]]\n"
+    "==External links==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_recognises_editions_header_variant():
+    """Alternate heading: some Wookieepedia trade series use
+    ==Editions== instead of ==Volumes==. Same parser path."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Foo", "wikitext": {"*": EDITIONS_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("Foo"))
+    assert issues == ["Foo Trade Vol. 1", "Foo Trade Vol. 2"]
+
+
 @respx.mock
 def test_get_series_issues_returns_empty_for_missing_article():
     def _route(_req: httpx.Request) -> httpx.Response:
