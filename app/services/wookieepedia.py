@@ -121,6 +121,46 @@ def _first_line(value: Optional[str]) -> Optional[str]:
     return None
 
 
+# Epic Collection sub-imprints all live under the umbrella "Epic
+# Collection" Wookieepedia article, distinguished by article-title
+# prefix and the ===Legends=== / ===Canon=== gallery sections inside
+# that article. Detect at parse time so we can:
+#   1) display a more specific series name in the library
+#      ("Star Wars Legends Epic Collection" instead of just
+#      "Epic Collection")
+#   2) scope expected-issues extraction to just the relevant gallery
+#      section, encoded as `Epic Collection#Legends` /
+#      `Epic Collection#Canon` source_ids.
+# Returns (display_name, source_id) when matched, else None.
+_EC_LEGENDS_RX = re.compile(
+    r"^Star\s+Wars(?::)?(?:\s+[A-Za-z][^:]*?)?\s+Legends\s+Epic\s+Collection\s*:",
+    re.IGNORECASE,
+)
+_EC_MODERN_RX = re.compile(
+    r"^Star\s+Wars(?::)?(?:\s+[A-Za-z][^:]*?)?\s+Modern\s+Era\s+Epic\s+Collection\s*:",
+    re.IGNORECASE,
+)
+
+
+def _detect_epic_collection_subimprint(article_title: Optional[str]) -> Optional[tuple[str, str]]:
+    """Return (display_series_name, source_id) for Marvel Epic
+    Collection sub-imprints, else None.
+
+    Recognises article titles like:
+        Star Wars Legends Epic Collection: The Empire Vol. 1
+        Star Wars: Darth Vader Legends Epic Collection: Dark Lord
+        Star Wars Modern Era Epic Collection: Skywalker Strikes
+        Star Wars: Kanan Modern Era Epic Collection: The Last Padawan
+    """
+    if not article_title:
+        return None
+    if _EC_LEGENDS_RX.search(article_title):
+        return ("Star Wars Legends Epic Collection", "Epic Collection#Legends")
+    if _EC_MODERN_RX.search(article_title):
+        return ("Star Wars: Modern Era Epic Collection", "Epic Collection#Canon")
+    return None
+
+
 def _pick_specific_series(raw: Optional[str]) -> Optional[str]:
     """Pick the most-specific series article title from a Wookieepedia
     `series=` infobox value's RAW wikitext (before `_clean()` stripped
@@ -725,6 +765,18 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
         _pick_specific_series(fields.get("__series_raw__"))
         or _first_line(fields.get("series"))
     )
+
+    # Marvel Epic Collection sub-imprint detection. When the article
+    # title matches a Legends / Modern Era pattern, override the bland
+    # umbrella series name ("Epic Collection") with the sub-imprint and
+    # encode the section to fetch issues from in `series_article_id`.
+    # This lets the user track Legends and Canon EC volumes as separate
+    # series progress, while sharing the umbrella article as the
+    # upstream source of truth.
+    series_article_id: Optional[str] = None
+    sub = _detect_epic_collection_subimprint(parsed.get("title") or title)
+    if sub:
+        series, series_article_id = sub
     publisher = _first_line(fields.get("publisher"))
 
     # Trade collections list their contents either inside |issues= on the
@@ -786,6 +838,7 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
         format=fmt,
         language=language,
         collected_issues=collected_issues,
+        series_article_id=series_article_id,
         timeline=timeline,
         era=era,
         canon=canon,
@@ -831,6 +884,12 @@ async def get_article(title: str) -> Optional[LookupCandidate]:
 async def get_series_issues(article_title: str) -> list[str]:
     """Fetch the issue (or volume) list off a *series* article.
 
+    `article_title` may optionally carry a `#SectionName` suffix to
+    scope gallery extraction to one ===SectionName=== subheading
+    inside the article. Used for Epic Collection sub-imprints, where
+    one umbrella wiki article contains separate ===Legends=== and
+    ===Canon=== galleries we want to read as distinct series.
+
     Strategy, in order:
       1. ==Issues== / ===Issues=== (with "List of" / "Single" aliases).
          Inside, prefer the modern `{{Comictable-issue|…}}` template
@@ -847,10 +906,39 @@ async def get_series_issues(article_title: str) -> list[str]:
     Empty list if the article doesn't exist or has no recognisable
     section.
     """
+    # Strip the optional section anchor before fetching the page.
+    section_anchor: Optional[str] = None
+    if "#" in article_title:
+        article_title, section_anchor = article_title.split("#", 1)
+
     parsed = await _parse_page(article_title)
     if not parsed:
         return []
     wikitext = (parsed.get("wikitext") or {}).get("*") or ""
+
+    # Section anchor restricts gallery extraction to the matching
+    # ===Section=== subheading body. Galleries outside that scope are
+    # ignored — that's how we separate Legends vs Canon EC volumes
+    # without polluting either list.
+    if section_anchor:
+        section_re = re.compile(
+            r"^={2,4}\s*" + re.escape(section_anchor) + r"\s*={2,4}\s*$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        section_body = _section_body(wikitext, section_re)
+        if section_body is not None:
+            items = _extract_gallery_links(section_body)
+            if items:
+                return items
+            items = _extract_numbered_volume_links(section_body)
+            if items:
+                return items
+            items = _extract_bullet_targets(section_body)
+            if items:
+                return items
+        # If the section was named but empty/missing, fall through to
+        # the unscoped paths below as a best-effort instead of
+        # surfacing a hard error.
 
     # Path 1: single-issue series.
     body = _section_body(wikitext, _SERIES_ISSUES_HEADERS)

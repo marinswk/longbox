@@ -35,6 +35,15 @@ class LookupCandidate(BaseModel):
     # Trade-only: newline-joined list of contained issues.
     collected_issues: Optional[str] = None
 
+    # Optional override for the upstream "series article" identifier when
+    # it differs from the displayed series name. Used for sub-imprints
+    # like Epic Collection's Legends / Modern Era split, where the
+    # display series is e.g. "Star Wars Legends Epic Collection" but the
+    # underlying Wookieepedia article we fetch issues from is encoded as
+    # "Epic Collection#Legends" (the umbrella article + the gallery
+    # section to scope to). Falls back to `series` when None.
+    series_article_id: Optional[str] = None
+
     # Star-Wars-specific buckets (null for non-SW comics).
     timeline: Optional[str] = None
     era: Optional[str] = None

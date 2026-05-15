@@ -175,6 +175,107 @@ def test_candidate_picks_specific_series_from_hierarchical_infobox():
     assert cand.series == "Star Wars: The High Republic Adventures — The Monster of Temple Peak"
 
 
+# Marvel Epic Collection has Legends + Modern Era sub-imprints that
+# share one umbrella Wookieepedia article ("Epic Collection") but
+# live in separate galleries (===Legends=== / ===Canon=== under
+# ==Media==). The parser must:
+#   1) detect the sub-imprint from the TPB's article title prefix and
+#      set candidate.series + candidate.series_article_id accordingly;
+#   2) honour a `#Section` suffix on the source_id and scope gallery
+#      extraction to that section only.
+
+EC_TPB_LEGENDS_WIKITEXT = (
+    "{{Top|rwm}}\n"
+    "{{ComicCollection\n"
+    "|title=''Star Wars Legends Epic Collection: The Empire Vol. 1''\n"
+    "|publisher=[[Marvel Comics]]\n"
+    "|series=''[[Epic Collection]]''\n"
+    "|media type=Trade paperback\n"
+    "}}\n"
+    "==Contents==\n"
+    "*[[Republic 78|''Republic'' 78]]\n"
+    "*[[Republic 79|''Republic'' 79]]\n"
+)
+
+EC_UMBRELLA_WIKITEXT = (
+    "{{Top}}\n"
+    "Some intro.\n"
+    "==Media==\n"
+    "===Legends===\n"
+    "<gallery>\n"
+    "File:A.png|''[[Star Wars Legends Epic Collection: The Empire Vol. 1]]''<br />2015\n"
+    "File:B.png|''[[Star Wars Legends Epic Collection: The New Republic Vol. 1]]''<br />2015\n"
+    "</gallery>\n"
+    "===Canon===\n"
+    "<gallery>\n"
+    "File:C.png|''[[Star Wars Modern Era Epic Collection: Skywalker Strikes]]''<br />2024\n"
+    "</gallery>\n"
+    "==Sources==\n"
+)
+
+
+@respx.mock
+def test_epic_collection_sub_imprint_detected_from_title():
+    """Saving an EC TPB should land it in a Legends-vs-Modern-Era
+    specific series, not a unified "Epic Collection" bucket. The
+    distinction is encoded in the candidate's series_article_id
+    (`Epic Collection#Legends`) so the auto-link / refresh fetches
+    the matching gallery section only."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Star Wars Legends Epic Collection: The Empire Vol. 1",
+                          "wikitext": {"*": EC_TPB_LEGENDS_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    cand = asyncio.run(wookieepedia.get_article(
+        "Star Wars Legends Epic Collection: The Empire Vol. 1"
+    ))
+    assert cand is not None
+    assert cand.series == "Star Wars Legends Epic Collection"
+    assert cand.series_article_id == "Epic Collection#Legends"
+
+
+@respx.mock
+def test_get_series_issues_scopes_to_section_when_anchor_given():
+    """`Epic Collection#Legends` and `Epic Collection#Canon` must
+    return the Legends or Canon galleries respectively, not the
+    union."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Epic Collection",
+                          "wikitext": {"*": EC_UMBRELLA_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    # Distinct base article title to dodge MetadataCache pollution from
+    # earlier tests that already cached "Epic Collection" with a
+    # different fixture.
+    legends = asyncio.run(wookieepedia.get_series_issues(
+        "Epic Collection Scoped Probe#Legends"
+    ))
+    canon = asyncio.run(wookieepedia.get_series_issues(
+        "Epic Collection Scoped Probe#Canon"
+    ))
+    assert legends == [
+        "Star Wars Legends Epic Collection: The Empire Vol. 1",
+        "Star Wars Legends Epic Collection: The New Republic Vol. 1",
+    ]
+    assert canon == [
+        "Star Wars Modern Era Epic Collection: Skywalker Strikes",
+    ]
+
+
 EDITIONS_WIKITEXT = (
     "{{Top}}\n"
     "==Editions==\n"

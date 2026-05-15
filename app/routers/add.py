@@ -190,6 +190,7 @@ async def _download_and_store_cover(comic_id: int, remote_url: str) -> None:
 async def _enrich_series_from_candidate(
     series_id: int, source: str, candidate_series: Optional[str],
     candidate_raw: Optional[dict],
+    candidate_series_article_id: Optional[str] = None,
 ) -> None:
     """Best-effort background fill of `Series.source` / `Series.source_id`
     / `Series.expected_issues` using the same upstream the comic came from.
@@ -227,7 +228,10 @@ async def _enrich_series_from_candidate(
         source_id: Optional[str] = None
         if source == "wookieepedia":
             fetcher = wookieepedia.get_series_issues
-            source_id = candidate_series  # article title
+            # Prefer the explicit series_article_id when set (e.g. Epic
+            # Collection sub-imprints encoded as "Epic Collection#Legends");
+            # fall back to the bare series name otherwise.
+            source_id = candidate_series_article_id or candidate_series
         elif source == "comicvine":
             raw = candidate_raw or {}
             vol = raw.get("volume") or {}
@@ -523,6 +527,7 @@ async def add_save(
                 source,
                 candidate.series,
                 candidate.raw,
+                candidate.series_article_id,
             )
 
     price = None
