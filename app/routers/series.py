@@ -70,8 +70,27 @@ async def _load(session: AsyncSession, series_id: int) -> dict:
         else None
     )
 
+    # Multi-series-aware ownership query. A comic appears here when
+    # EITHER its primary `series_id` FK matches OR it has a row in
+    # ComicSeries pointing at this series. The OR lets us cover legacy
+    # data (pre-multi-series) without a forced backfill while also
+    # picking up newly-attached series links from the comic detail
+    # page's "Add to another series" form.
+    from app.models import ComicSeries
     comics_result = await session.exec(
-        select(Comic).where(Comic.series_id == series_id).order_by(Comic.issue_number)
+        select(Comic)
+        .join(
+            ComicSeries,
+            (ComicSeries.comic_id == Comic.id)
+            & (ComicSeries.series_id == series_id),
+            isouter=True,
+        )
+        .where(
+            (Comic.series_id == series_id)
+            | (ComicSeries.series_id == series_id)
+        )
+        .distinct()
+        .order_by(Comic.issue_number)
     )
     comics = list(comics_result.all())
 

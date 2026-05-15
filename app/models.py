@@ -135,6 +135,19 @@ class ComicTag(SQLModel, table=True):
     tag_id: int = Field(foreign_key="tag.id", primary_key=True)
 
 
+class ComicSeries(SQLModel, table=True):
+    """Many-to-many link: a Comic can belong to multiple Series.
+    The single `Comic.series_id` FK is kept as the "primary" series
+    pointer for compatibility with existing queries; this table is
+    the source of truth for membership-related views (the series
+    detail page, multi-series management on a comic, etc.).
+    """
+    comic_id: int = Field(foreign_key="comic.id", primary_key=True)
+    series_id: int = Field(foreign_key="series.id", primary_key=True)
+    is_primary: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class ComicContainment(SQLModel, table=True):
     """A Comic (`parent`) collects another Comic (`child`). Typically
     used for omnibus → TPB relationships, but the link is intentionally

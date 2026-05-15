@@ -198,3 +198,30 @@ async def backfill_wookieepedia_fandom() -> int:
         )
         await session.commit()
         return int(result.rowcount or 0)
+
+
+async def backfill_comic_series_links() -> int:
+    """Mirror every Comic.series_id value into the ComicSeries link
+    table so multi-series-aware views see the primary series too.
+    Idempotent — uses INSERT OR IGNORE on the (comic_id, series_id)
+    composite primary key. Returns rows added.
+
+    Necessary because:
+      1. Comics saved BEFORE migration 0009 may still lack a
+         ComicSeries row if the migration's one-shot backfill couldn't
+         reach them (e.g. in long-lived dev DBs that skipped the
+         migration's INSERT pass).
+      2. Save paths added before the multi-series schema landed
+         (CSV import, /add/save, etc.) write `Comic.series_id` only;
+         this catches them up on the next cold start.
+    """
+    from sqlalchemy import text
+    async with SessionLocal() as session:
+        result = await session.exec(text(
+            "INSERT OR IGNORE INTO comicseries "
+            "  (comic_id, series_id, is_primary, created_at) "
+            "SELECT id, series_id, 1, CURRENT_TIMESTAMP "
+            "FROM comic WHERE series_id IS NOT NULL"
+        ))
+        await session.commit()
+        return int(result.rowcount or 0)

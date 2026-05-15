@@ -9,9 +9,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.migrations import run_migrations
 from app.routers import (
-    add, admin, comics, containment, detail, duplicates, home, imports,
-    library, lookup, pwa, reading_log, search, series as series_router,
-    stats, tags,
+    add, admin, comic_series, comics, containment, detail, duplicates, home,
+    imports, library, lookup, pwa, reading_log, search,
+    series as series_router, stats, tags,
 )
 from app.services.covers import covers_dir
 
@@ -23,8 +23,9 @@ async def lifespan(_app: FastAPI):
     import app.models  # noqa: F401  ensure tables are registered
     from app.services.cache import prune_expired
     from app.services.fandoms import (
-        backfill_merge_duplicate_series, backfill_normalize_format,
-        backfill_strip_multiline_names, backfill_wookieepedia_fandom,
+        backfill_comic_series_links, backfill_merge_duplicate_series,
+        backfill_normalize_format, backfill_strip_multiline_names,
+        backfill_wookieepedia_fandom,
     )
 
     await run_migrations()
@@ -45,6 +46,10 @@ async def lifespan(_app: FastAPI):
     # (e.g. newline-blobs) and now normalize to the same value. Runs AFTER
     # the multi-line strip so the dedup probe sees the cleaned names.
     await backfill_merge_duplicate_series()
+    # Mirror Comic.series_id into ComicSeries for every comic so the
+    # multi-series-aware queries (series detail, comic-detail series
+    # section) see the primary series link. Idempotent.
+    await backfill_comic_series_links()
     yield
 
 
@@ -105,5 +110,6 @@ def create_app() -> FastAPI:
     app.include_router(duplicates.router)
     app.include_router(series_router.router)
     app.include_router(containment.router)
+    app.include_router(comic_series.router)
 
     return app

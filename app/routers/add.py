@@ -465,6 +465,9 @@ async def add_save(
         series_row = await _get_or_create_series(
             session, effective_series or None, publisher_row.id if publisher_row else None
         )
+        # Multi-series link gets written after the Comic is committed
+        # below. The `series_id` FK + the ComicSeries row stay in sync
+        # via that post-commit step.
         comic = Comic(
             series_id=series_row.id if series_row else None,
             title=title or None,
@@ -488,6 +491,27 @@ async def add_save(
         session.add(comic)
         await session.commit()
         await session.refresh(comic)
+        # Mirror the primary series link into the multi-series link
+        # table. The Comic's `series_id` stays as the "primary" pointer
+        # for backward-compat queries; ComicSeries is the source of
+        # truth for membership-aware views. Guard against duplicate
+        # inserts — the lifespan backfill may have already created
+        # this row (it runs on every cold start across the shared
+        # test DB, and an end user re-saving the same comic shouldn't
+        # crash either).
+        if comic.series_id is not None:
+            from app.models import ComicSeries
+            already = (await session.exec(
+                select(ComicSeries).where(
+                    ComicSeries.comic_id == comic.id,
+                    ComicSeries.series_id == comic.series_id,
+                )
+            )).first()
+            if already is None:
+                session.add(ComicSeries(
+                    comic_id=comic.id, series_id=comic.series_id, is_primary=True,
+                ))
+                await session.commit()
         if comic.cover_url_remote:
             background.add_task(_download_and_store_cover, comic.id, comic.cover_url_remote)
 

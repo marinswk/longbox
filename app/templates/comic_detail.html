@@ -116,6 +116,10 @@
   </aside>
 
   <section class="space-y-6">
+    {# Multi-series management — listed before the meta block so the
+       user always sees series membership above the fold. #}
+    {% include "partials/_comic_series.html" %}
+
     <div id="meta">
       {% include "partials/_comic_meta.html" %}
     </div>
@@ -126,6 +130,38 @@
     <div id="copies-section">
       {% include "partials/_copies_section.html" %}
     </div>
+
+    {# Covered-by: parent Comics in the library that list this one as
+       a contained child. Shown only when at least one parent exists,
+       so a single-issue / standalone comic doesn't pick up an empty
+       section. #}
+    {% if covered_by %}
+    <section class="panel rounded-3xl p-6">
+      <h3 class="font-display text-2xl tracking-wide">COVERED BY</h3>
+      <p class="mt-1 text-xs text-gray-600">
+        These owned volumes also contain this comic — useful for
+        spotting duplicate coverage across reprints.
+      </p>
+      <ul class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        {% for p in covered_by %}
+        {% set cover = p.cover_url_local or p.cover_url_remote %}
+        <li>
+          <a href="/comic/{{ p.id }}" class="block panel rounded-2xl p-2 transition hover:-translate-y-0.5">
+            <div class="aspect-[2/3] w-full overflow-hidden rounded border-2 border-black bg-gray-100">
+              {% if cover %}
+                <img src="{{ cover }}" alt="" loading="lazy" class="h-full w-full object-cover" />
+              {% endif %}
+            </div>
+            <p class="mt-1 truncate text-xs font-semibold" title="{{ p.title or '(untitled)' }}">
+              {{ p.title or '(untitled)' }}
+            </p>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
     <section class="panel rounded-3xl p-6">
       {% set children = contains_children %}
       {% with parent_id=comic.id %}

@@ -192,7 +192,7 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
     # omnibus, etc.). Loaded here so the page renders without a
     # second HTMX round-trip. Each child is tagged with `owned` so
     # the template can grey out stub-only references.
-    from app.models import ComicContainment
+    from app.models import ComicContainment, ComicSeries
     from sqlalchemy import func as _func
     contain_rows = (await session.exec(
         select(Comic, ComicContainment)
@@ -208,6 +208,36 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
         copies_n = n_copies[0] if isinstance(n_copies, tuple) else (n_copies or 0)
         contains_children.append({"comic": child, "owned": int(copies_n or 0) > 0})
 
+    # "Covered by" — every parent Comic in the library that lists
+    # this one as a contained child. Lets the user see "the issues in
+    # this TPB are also in my owned Omnibus X" at a glance.
+    covered_by_rows = (await session.exec(
+        select(Comic)
+        .join(ComicContainment, ComicContainment.parent_id == Comic.id)
+        .where(ComicContainment.child_id == comic_id)
+        .order_by(Comic.title)
+    )).all()
+    covered_by = list(covered_by_rows)
+
+    # Multi-series links. The primary series is always first, then
+    # any extra series attached via the multi-series form.
+    series_rows: list[tuple] = []
+    seen_series_ids: set[int] = set()
+    if comic.series_id is not None and series is not None:
+        series_rows.append((series, True))
+        seen_series_ids.add(series.id)
+    extra_rows = (await session.exec(
+        select(Series, ComicSeries.is_primary)
+        .join(ComicSeries, ComicSeries.series_id == Series.id)
+        .where(ComicSeries.comic_id == comic_id)
+        .order_by(Series.name)
+    )).all()
+    for s, is_primary in extra_rows:
+        if s.id in seen_series_ids:
+            continue
+        seen_series_ids.add(s.id)
+        series_rows.append((s, bool(is_primary)))
+
     return {
         "comic": comic, "series": series, "publisher": publisher,
         "copies": copies, "tags": tags, "comic_id": comic_id,
@@ -215,6 +245,8 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
         "arcs": arcs,
         "collected_entries": collected,
         "contains_children": contains_children,
+        "covered_by": covered_by,
+        "series_rows": series_rows,
     }
 
 

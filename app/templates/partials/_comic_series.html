@@ -1,0 +1,48 @@
+{# Multi-series section on the comic detail page. Listed at the top
+   of the meta column so the user always sees which series this
+   comic belongs to and can attach additional ones. #}
+<div id="comic-series-section" class="rounded-2xl border-2 border-black bg-paper-warm/40 p-3">
+  <p class="text-xs font-semibold uppercase tracking-wide text-gray-600">
+    Series
+  </p>
+  {% if series_rows %}
+  <ul class="mt-1 flex flex-wrap items-center gap-1.5">
+    {% for s, is_primary in series_rows %}
+    <li class="inline-flex items-center gap-1 rounded-full border-2 border-black bg-white px-2 py-0.5 text-xs font-semibold shadow-[2px_2px_0_0_#000]">
+      <a href="/series/{{ s.id }}" class="hover:underline">{{ s.name }}</a>
+      {% if is_primary %}
+        <span class="rounded bg-crawl px-1 text-[9px] font-bold uppercase text-black">primary</span>
+      {% else %}
+        <form hx-post="/comic/{{ comic_id }}/series/{{ s.id }}/delete"
+              hx-target="#comic-series-section"
+              hx-swap="outerHTML"
+              class="inline">
+          <button type="submit" aria-label="Remove series link"
+                  class="lb-mini-tap inline-flex h-4 w-4 items-center justify-center rounded text-xs font-bold leading-none hover:bg-red-100">
+            ×
+          </button>
+        </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="mt-1 text-xs italic text-gray-600">No series attached.</p>
+  {% endif %}
+
+  <div class="mt-2">
+    <label class="block">
+      <span class="text-[10px] font-semibold uppercase">Add to another series</span>
+      <input type="text"
+             placeholder="Type a series name…"
+             autocomplete="off"
+             hx-get="/comic/{{ comic_id }}/series/search"
+             hx-trigger="keyup changed delay:300ms, search"
+             hx-target="#comic-series-search-results"
+             hx-swap="innerHTML"
+             name="q"
+             class="mt-0.5 w-full rounded border-2 border-black px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-crawl" />
+    </label>
+    <div id="comic-series-search-results" class="mt-1"></div>
+  </div>
+</div>

@@ -1,0 +1,30 @@
+{# Typeahead results for the multi-series attach form. Library
+   matches first, then always a "Create new series '<q>'" option. #}
+<ul class="space-y-1">
+  {% for s in matches %}
+  <li>
+    <form hx-post="/comic/{{ comic_id }}/series"
+          hx-target="#comic-series-section"
+          hx-swap="outerHTML"
+          class="flex items-center gap-2">
+      <input type="hidden" name="series_id" value="{{ s.id }}" />
+      <button type="submit"
+              class="flex-1 truncate rounded-md border-2 border-black bg-white px-2 py-1 text-left text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:bg-paper">
+        ➕ {{ s.name }}
+      </button>
+    </form>
+  </li>
+  {% endfor %}
+  <li>
+    <form hx-post="/comic/{{ comic_id }}/series"
+          hx-target="#comic-series-section"
+          hx-swap="outerHTML"
+          class="flex items-center gap-2">
+      <input type="hidden" name="new_series_name" value="{{ q }}" />
+      <button type="submit"
+              class="flex-1 truncate rounded-md border-2 border-black bg-crawl-light/40 px-2 py-1 text-left text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:bg-crawl-light">
+        ➕ Create new series "{{ q }}"
+      </button>
+    </form>
+  </li>
+</ul>
