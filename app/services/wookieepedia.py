@@ -161,6 +161,65 @@ def _detect_epic_collection_subimprint(article_title: Optional[str]) -> Optional
     return None
 
 
+# Marvel Omnibus is the parallel line to Epic Collection: hardcover
+# reprint collections, organised under the umbrella Wookieepedia
+# article "Marvel Omnibus" with three gallery sections:
+#
+#   ===Canon===              Marvel-original canon-era omnibuses.
+#                            Titles: "Star Wars: <X> Omnibus..."
+#                            (no "Legends" word, no "Original Marvel Years")
+#   ===Marvel Legends===     Marvel-original Legends-era reprints.
+#                            Titles: "Star Wars: The Original Marvel
+#                            Years Omnibus..."
+#   ===Dark Horse Legends=== Marvel reprints of Dark-Horse-published
+#                            Legends comics.
+#                            Titles: "Star Wars Legends: <X> Omnibus..."
+#
+# The Dark Horse Comics' OWN line ("Star Wars Omnibus: <X>") lives in
+# its own Wookieepedia article and goes through the normal series
+# parsing — we DON'T reroute it through Marvel Omnibus.
+_OMNIBUS_DARK_HORSE_LEGENDS_RX = re.compile(
+    r"^Star\s+Wars\s+Legends\s*:.*\bOmnibus\b",
+    re.IGNORECASE,
+)
+_OMNIBUS_MARVEL_LEGENDS_RX = re.compile(
+    r"^Star\s+Wars\s*:\s*The\s+Original\s+Marvel\s+Years\s+Omnibus\b",
+    re.IGNORECASE,
+)
+_OMNIBUS_CANON_RX = re.compile(
+    r"^Star\s+Wars\s*:.*\bOmnibus\b",
+    re.IGNORECASE,
+)
+_DARK_HORSE_OMNIBUS_LINE_RX = re.compile(
+    r"^Star\s+Wars\s+Omnibus\s*:",
+    re.IGNORECASE,
+)
+
+
+def _detect_marvel_omnibus_subimprint(article_title: Optional[str]) -> Optional[tuple[str, str]]:
+    """Return (display_series_name, source_id) for Marvel Omnibus
+    sub-imprints, else None.
+
+    Order matters: the Dark Horse Comics line "Star Wars Omnibus: <X>"
+    is checked first and short-circuited so its titles never match the
+    broader Canon pattern. Then the more-specific Marvel Legends
+    pattern is tried before the generic Canon pattern (Marvel Years
+    titles start with "Star Wars:" and would otherwise be mis-routed
+    to Canon).
+    """
+    if not article_title:
+        return None
+    if _DARK_HORSE_OMNIBUS_LINE_RX.match(article_title):
+        return None  # Dark Horse line has its own "Star Wars Omnibus" article
+    if _OMNIBUS_DARK_HORSE_LEGENDS_RX.match(article_title):
+        return ("Star Wars Legends Omnibus", "Marvel Omnibus#Dark Horse Legends")
+    if _OMNIBUS_MARVEL_LEGENDS_RX.match(article_title):
+        return ("Star Wars Marvel Legends Omnibus", "Marvel Omnibus#Marvel Legends")
+    if _OMNIBUS_CANON_RX.match(article_title):
+        return ("Star Wars Marvel Omnibus", "Marvel Omnibus#Canon")
+    return None
+
+
 def _pick_specific_series(raw: Optional[str]) -> Optional[str]:
     """Pick the most-specific series article title from a Wookieepedia
     `series=` infobox value's RAW wikitext (before `_clean()` stripped
@@ -766,15 +825,23 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
         or _first_line(fields.get("series"))
     )
 
-    # Marvel Epic Collection sub-imprint detection. When the article
-    # title matches a Legends / Modern Era pattern, override the bland
-    # umbrella series name ("Epic Collection") with the sub-imprint and
-    # encode the section to fetch issues from in `series_article_id`.
-    # This lets the user track Legends and Canon EC volumes as separate
-    # series progress, while sharing the umbrella article as the
-    # upstream source of truth.
+    # Marvel reprint-line sub-imprint detection: Epic Collection
+    # (TPB-format) and Marvel Omnibus (hardcover format) both have
+    # umbrella Wookieepedia articles with Legends/Canon gallery
+    # sections. Detecting the sub-imprint from the article-title
+    # prefix lets us:
+    #   - display a meaningful series name in the library (instead of
+    #     the bland "Epic Collection" or whatever the singles series
+    #     happens to be)
+    #   - point auto-link / refresh at the umbrella article with the
+    #     right section anchor so progress lists only the matching
+    #     volumes (Legends vs Canon are kept separate).
     series_article_id: Optional[str] = None
-    sub = _detect_epic_collection_subimprint(parsed.get("title") or title)
+    art_title = parsed.get("title") or title
+    sub = (
+        _detect_epic_collection_subimprint(art_title)
+        or _detect_marvel_omnibus_subimprint(art_title)
+    )
     if sub:
         series, series_article_id = sub
     publisher = _first_line(fields.get("publisher"))

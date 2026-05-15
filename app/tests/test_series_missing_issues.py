@@ -276,6 +276,85 @@ def test_get_series_issues_scopes_to_section_when_anchor_given():
     ]
 
 
+# Marvel Omnibus is the hardcover sibling of Epic Collection. Same
+# umbrella-article + gallery-sections shape but with three sections
+# (Canon / Marvel Legends / Dark Horse Legends), and the title
+# patterns the detector keys off of differ from EC.
+
+MO_UMBRELLA_WIKITEXT = (
+    "{{Top}}\n"
+    "==Media==\n"
+    "===Canon===\n"
+    "<gallery>\n"
+    "File:C1.png|''[[Star Wars: Kanan Omnibus]]''<br />2016\n"
+    "</gallery>\n"
+    "===Marvel Legends===\n"
+    "<gallery>\n"
+    "File:ML1.png|''[[Star Wars: The Original Marvel Years Omnibus Vol. 1]]''<br />2016\n"
+    "</gallery>\n"
+    "===Dark Horse Legends===\n"
+    "<gallery>\n"
+    "File:DH1.png|''[[Star Wars Legends: The Old Republic Omnibus Vol. 1]]''<br />2022\n"
+    "File:DH2.png|''[[Star Wars Legends: The New Republic Omnibus Vol. 1]]''<br />2022\n"
+    "</gallery>\n"
+    "==Notes and references==\n"
+)
+
+
+def test_marvel_omnibus_subimprint_detector_routes_all_four_cases():
+    """Unit-test the title-pattern → (display, source_id) mapping
+    directly so each branch is exercised even if the upstream gallery
+    section names ever change."""
+    from app.services.wookieepedia import _detect_marvel_omnibus_subimprint
+
+    assert _detect_marvel_omnibus_subimprint(
+        "Star Wars Legends: The Old Republic Omnibus Vol. 1"
+    ) == ("Star Wars Legends Omnibus", "Marvel Omnibus#Dark Horse Legends")
+
+    assert _detect_marvel_omnibus_subimprint(
+        "Star Wars: The Original Marvel Years Omnibus Vol. 1"
+    ) == ("Star Wars Marvel Legends Omnibus", "Marvel Omnibus#Marvel Legends")
+
+    assert _detect_marvel_omnibus_subimprint(
+        "Star Wars: Kanan Omnibus"
+    ) == ("Star Wars Marvel Omnibus", "Marvel Omnibus#Canon")
+
+    # The Dark Horse Comics' own "Star Wars Omnibus: ..." line goes
+    # through the normal series flow — NOT routed via Marvel Omnibus.
+    assert _detect_marvel_omnibus_subimprint(
+        "Star Wars Omnibus: X-Wing Rogue Squadron Volume 1"
+    ) is None
+
+
+@respx.mock
+def test_get_series_issues_scopes_marvel_omnibus_sections():
+    """Marvel Omnibus#Dark Horse Legends returns the Dark Horse
+    gallery only — not the Canon or Marvel Legends entries."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Marvel Omnibus Probe",
+                          "wikitext": {"*": MO_UMBRELLA_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    dh = asyncio.run(wookieepedia.get_series_issues(
+        "Marvel Omnibus Probe#Dark Horse Legends"
+    ))
+    canon = asyncio.run(wookieepedia.get_series_issues(
+        "Marvel Omnibus Probe#Canon"
+    ))
+    assert dh == [
+        "Star Wars Legends: The Old Republic Omnibus Vol. 1",
+        "Star Wars Legends: The New Republic Omnibus Vol. 1",
+    ]
+    assert canon == ["Star Wars: Kanan Omnibus"]
+
+
 EDITIONS_WIKITEXT = (
     "{{Top}}\n"
     "==Editions==\n"
