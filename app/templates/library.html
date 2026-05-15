@@ -211,6 +211,21 @@
       <h2 class="font-display text-3xl tracking-wide">YOUR LIBRARY</h2>
       <p class="text-sm text-gray-600">{{ total }} comic{{ '' if total == 1 else 's' }}</p>
     </div>
+    {# Tracked-but-not-owned toggle. Stub Comics (no Copy attached)
+       are hidden by default; this anchor lets the user reveal them
+       — useful when reconciling "which TPBs are referenced by an
+       omnibus I own". Server-side gating in `_apply_filters`. #}
+    <div class="mt-2 text-xs">
+      {% if include_tracked %}
+        <a href="/library" class="font-semibold text-crawl-dark hover:underline">
+          ← Hide tracked / unowned
+        </a>
+      {% else %}
+        <a href="/library?tracked=on" class="font-semibold text-crawl-dark hover:underline">
+          Show tracked (unowned) comics →
+        </a>
+      {% endif %}
+    </div>
     <div id="library-grid" class="mt-6">
       {% include "partials/_library_grid.html" %}
     </div>

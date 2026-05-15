@@ -52,7 +52,15 @@ def _apply_filters(
     stmt, *, publishers, series_names, years, tag_names, q,
     formats=(), canons=(), eras=(), arcs=(),
     read_statuses=(), storages=(), fandoms=(),
+    include_tracked: bool = False,
 ):
+    # Stub Comics (no Copy rows) are tracked-but-not-owned — e.g. a
+    # TPB the user marked as contained inside an omnibus they own. By
+    # default the library hides them so the page reflects the
+    # physical collection; `include_tracked` flips the gate.
+    if not include_tracked:
+        owned_sub = select(Copy.comic_id).distinct()
+        stmt = stmt.where(Comic.id.in_(owned_sub))
     if publishers:
         stmt = stmt.where(Publisher.name.in_(publishers))
     if series_names:
@@ -179,6 +187,7 @@ async def _query_page(
     read_statuses=(),
     storages=(),
     fandoms=(),
+    include_tracked: bool = False,
 ):
     base = (
         select(Comic, Series, Publisher)
@@ -191,6 +200,7 @@ async def _query_page(
         years=years, tag_names=tag_names, q=q,
         formats=formats, canons=canons, eras=eras, arcs=arcs,
         read_statuses=read_statuses, storages=storages, fandoms=fandoms,
+        include_tracked=include_tracked,
     )
 
     count_stmt = (
@@ -204,6 +214,7 @@ async def _query_page(
         years=years, tag_names=tag_names, q=q,
         formats=formats, canons=canons, eras=eras, arcs=arcs,
         read_statuses=read_statuses, storages=storages, fandoms=fandoms,
+        include_tracked=include_tracked,
     )
     total = (await session.exec(count_stmt)).first() or 0
 
@@ -325,6 +336,7 @@ async def library_page(
     group: str = Query(default="none"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
+    tracked: str = Query(default=""),
 ) -> HTMLResponse:
     if group not in GROUP_VALUES:
         group = "none"
@@ -338,6 +350,7 @@ async def library_page(
     read_status = _drop_empty(read_status)
     storage = _drop_empty(storage)
     fandom = _drop_empty(fandom)
+    include_tracked = tracked.lower() in ("1", "true", "on", "yes")
     items, total = await _query_page(
         session,
         publishers=publisher,
@@ -354,6 +367,7 @@ async def library_page(
         read_statuses=read_status,
         storages=storage,
         fandoms=fandom,
+        include_tracked=include_tracked,
     )
     facets = await _facets(
         session, publishers=publisher, series_names=series,
@@ -368,6 +382,7 @@ async def library_page(
         formats=format, canons=canon, eras=era, arcs=arc,
         read_statuses=read_status, storages=storage, fandoms=fandom,
     )
+    ctx["include_tracked"] = include_tracked
     return templates.TemplateResponse(request, "library.html", ctx)
 
 
@@ -390,6 +405,7 @@ async def library_grid(
     group: str = Query(default="none"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
+    tracked: str = Query(default=""),
 ) -> HTMLResponse:
     if group not in GROUP_VALUES:
         group = "none"
@@ -403,6 +419,7 @@ async def library_grid(
     read_status = _drop_empty(read_status)
     storage = _drop_empty(storage)
     fandom = _drop_empty(fandom)
+    include_tracked = tracked.lower() in ("1", "true", "on", "yes")
     items, total = await _query_page(
         session,
         publishers=publisher,
@@ -419,6 +436,7 @@ async def library_grid(
         read_statuses=read_status,
         storages=storage,
         fandoms=fandom,
+        include_tracked=include_tracked,
     )
     ctx = _grid_context(
         items=items, total=total, page=page, page_size=page_size,

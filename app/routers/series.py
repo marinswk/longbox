@@ -334,8 +334,38 @@ async def series_auto_link(
                 except Exception:
                     cand = None
                 if cand and cand.series:
-                    sid = cand.series
+                    # `series_article_id` encodes the upstream article
+                    # identifier (e.g. "Epic Collection#Legends" for EC
+                    # sub-imprints). When absent, the display name IS
+                    # the article title.
+                    sid = cand.series_article_id or cand.series
                     sid_from_child_refetch = True
+                    # Backfill rename: if the refetched candidate has
+                    # a more-specific series name than what's stored
+                    # (the common case for legacy rows after the
+                    # sub-imprint detector landed), adopt it. Collision
+                    # with an existing series → merge into that one.
+                    if cand.series != series.name:
+                        from sqlalchemy import update as sa_update
+                        target = (await session.exec(
+                            select(Series).where(Series.name == cand.series)
+                        )).first()
+                        if target and target.id != series.id:
+                            # Merge our series into the existing target.
+                            old_id = series.id
+                            await session.exec(
+                                sa_update(Comic)
+                                .where(Comic.series_id == old_id)
+                                .values(series_id=target.id)
+                            )
+                            await session.delete(series)
+                            await session.commit()
+                            series = target
+                            series_id = target.id
+                        else:
+                            series.name = cand.series
+                            session.add(series)
+                            await session.commit()
             if not sid:
                 sid = series.name
         elif src == "comicvine":

@@ -135,6 +135,19 @@ class ComicTag(SQLModel, table=True):
     tag_id: int = Field(foreign_key="tag.id", primary_key=True)
 
 
+class ComicContainment(SQLModel, table=True):
+    """A Comic (`parent`) collects another Comic (`child`). Typically
+    used for omnibus → TPB relationships, but the link is intentionally
+    generic so trade → individual-issue references and similar use
+    cases work without further schema changes. Children can be
+    library-owned (with Copy rows) or stubs (zero Copies, representing
+    a tracked-but-not-owned book referenced from an owned parent)."""
+    parent_id: int = Field(foreign_key="comic.id", primary_key=True)
+    child_id: int = Field(foreign_key="comic.id", primary_key=True)
+    position: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class MetadataCache(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     source: str = Field(index=True)

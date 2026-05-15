@@ -188,12 +188,33 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
     from app.services.collected_issues import parse_entries
     collected = parse_entries(comic.collected_issues)
 
+    # Containment: child Comics this one collects (TPBs inside an
+    # omnibus, etc.). Loaded here so the page renders without a
+    # second HTMX round-trip. Each child is tagged with `owned` so
+    # the template can grey out stub-only references.
+    from app.models import ComicContainment
+    from sqlalchemy import func as _func
+    contain_rows = (await session.exec(
+        select(Comic, ComicContainment)
+        .join(ComicContainment, ComicContainment.child_id == Comic.id)
+        .where(ComicContainment.parent_id == comic_id)
+        .order_by(ComicContainment.position.asc(), Comic.id.asc())
+    )).all()
+    contains_children: list[dict] = []
+    for child, _link in contain_rows:
+        n_copies = (await session.exec(
+            select(_func.count(Copy.id)).where(Copy.comic_id == child.id)
+        )).first()
+        copies_n = n_copies[0] if isinstance(n_copies, tuple) else (n_copies or 0)
+        contains_children.append({"comic": child, "owned": int(copies_n or 0) > 0})
+
     return {
         "comic": comic, "series": series, "publisher": publisher,
         "copies": copies, "tags": tags, "comic_id": comic_id,
         "creators_sections": creators_sections,
         "arcs": arcs,
         "collected_entries": collected,
+        "contains_children": contains_children,
     }
 
 

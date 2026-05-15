@@ -1,0 +1,42 @@
+{# Typeahead results for the Contains add-form. Library matches
+   first; the Wookieepedia option is always offered at the bottom so
+   the user can pull in stub Comics for books they don't own. #}
+<ul class="space-y-1">
+  {% for c in matches %}
+  <li>
+    <form hx-post="/comic/{{ comic_id }}/contains"
+          hx-target="#contains-section"
+          hx-swap="outerHTML"
+          class="flex items-center gap-2">
+      <input type="hidden" name="child_id" value="{{ c.id }}" />
+      <button type="submit"
+              class="flex-1 truncate rounded-md border-2 border-black bg-white px-2 py-1 text-left text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:bg-paper">
+        ➕ {{ c.title or '(untitled)' }}
+        <span class="text-[10px] font-normal text-gray-500">— in your library</span>
+      </button>
+    </form>
+  </li>
+  {% endfor %}
+
+  {# Always offer the Wookieepedia option. Selecting it creates a
+     stub Comic with the exact `q` as the article title, then links
+     it as a child. #}
+  <li>
+    <form hx-post="/comic/{{ comic_id }}/contains"
+          hx-target="#contains-section"
+          hx-swap="outerHTML"
+          class="flex items-center gap-2">
+      <input type="hidden" name="wookieepedia_title" value="{{ q }}" />
+      <button type="submit"
+              class="flex-1 truncate rounded-md border-2 border-black bg-crawl-light/40 px-2 py-1 text-left text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:bg-crawl-light">
+        ➕ Pull "{{ q }}" from Wookieepedia (stub)
+      </button>
+    </form>
+  </li>
+</ul>
+{% if not matches %}
+<p class="mt-1 text-[10px] text-gray-500 italic">
+  No library matches. Use the Wookieepedia option to track a book
+  you don't own yet.
+</p>
+{% endif %}

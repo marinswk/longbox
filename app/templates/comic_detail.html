@@ -126,6 +126,12 @@
     <div id="copies-section">
       {% include "partials/_copies_section.html" %}
     </div>
+    <section class="panel rounded-3xl p-6">
+      {% set children = contains_children %}
+      {% with parent_id=comic.id %}
+        {% include "partials/_contains.html" %}
+      {% endwith %}
+    </section>
   </section>
 </div>
 {% endblock %}
