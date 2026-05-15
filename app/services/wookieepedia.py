@@ -730,14 +730,19 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     # Trade collections list their contents either inside |issues= on the
     # infobox or, more commonly, in a `==Contents==` (or `==Collects==`)
     # section as a bullet list. Try both.
+    # For Trade/Omnibus pages, prefer the ==Contents== bullet list over
+    # the infobox `issues=` field. The infobox often carries a terse
+    # range-summary ("1–50, 0, Handbook") that's useless for tracking;
+    # the Contents section lists actual single-issue article titles.
+    # Fall back to `issues=` only when the article has no Contents
+    # section.
     collected_issues = None
     if fields.get("__template__", "").lower() == "comiccollection":
-        issues_raw = fields.get("issues") or ""
-        items: list[str] = []
-        if issues_raw:
-            items = _split_multivalue(issues_raw)
+        items: list[str] = _extract_contents_section(wikitext)
         if not items:
-            items = _extract_contents_section(wikitext)
+            issues_raw = fields.get("issues") or ""
+            if issues_raw:
+                items = _split_multivalue(issues_raw)
         if items:
             collected_issues = "\n".join(items)
 
