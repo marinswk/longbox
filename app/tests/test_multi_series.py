@@ -897,6 +897,60 @@ def test_series_delete_endpoint_drops_series_and_unlinks_comics():
         assert link_still is None
 
 
+def test_compute_progress_counts_comics_linked_via_link_table():
+    """Regression for "home page series progress is 0 even for full
+    series": `compute_progress` was only counting comics whose
+    PRIMARY series_id matched. Inferred series — where the omnibus
+    is linked via the multi-series link table, not the primary FK —
+    showed 0/N owned because the comic was invisible to the query.
+
+    With the fix, the omnibus's collected_issues is consulted via
+    the trade-match path and the inferred series shows 100% complete
+    when the omnibus covers all expected issues."""
+    from app.models import ComicSeries
+    from app.services.series_progress import compute_progress
+
+    with _client() as client:
+        omni = _save(client, title="Prog Omni",
+                     isbn_13="9789000040401",
+                     series="Prog Primary Imprint")
+
+        # Create an inferred series row + link the omnibus to it via
+        # the link table (non-primary). Mirrors what
+        # `_attach_inferred_series` does.
+        async def _seed():
+            async with SessionLocal() as session:
+                comic = await session.get(Comic, omni)
+                comic.collected_issues = (
+                    "Prog Inner 1\nProg Inner 2\nProg Inner 3\n"
+                )
+                session.add(comic)
+                inner = Series(
+                    name="Prog Inner Series",
+                    source="wookieepedia",
+                    source_id="Prog Inner Series",
+                    expected_issues="Prog Inner 1\nProg Inner 2\nProg Inner 3",
+                )
+                session.add(inner)
+                await session.flush()
+                session.add(ComicSeries(
+                    comic_id=omni, series_id=inner.id, is_primary=False,
+                ))
+                await session.commit()
+                return inner.id
+        inner_id = asyncio.run(_seed())
+
+        async def _check():
+            async with SessionLocal() as session:
+                return await compute_progress(session, [inner_id])
+        progress = asyncio.run(_check())
+        assert inner_id in progress
+        # All 3 inner issues covered via the omnibus's collected_issues.
+        assert progress[inner_id].owned == 3
+        assert progress[inner_id].total == 3
+        assert progress[inner_id].is_complete
+
+
 def test_series_merge_reassigns_comicseries_links_not_just_primary_fk():
     """Regression: merging series A into series B must move every
     ComicSeries link from A→B, not just the Comic.series_id FK.

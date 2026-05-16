@@ -120,10 +120,15 @@ async def compute_progress(
 ) -> dict[int, Progress]:
     """Bulk-compute completion progress for a set of series IDs.
 
-    Skips series with no `expected_issues` (the upstream issue list
-    hasn't been refreshed yet). Returns `{series_id: Progress}` for the
-    series that DO have an issue list — callers can `dict.get()` and
-    treat None as "no progress info available".
+    Comics are pulled via BOTH the primary `Comic.series_id` FK AND
+    the multi-series `ComicSeries` link table. This matters for
+    omnibuses / TPBs that collect issues from multiple underlying
+    singles series: each underlying series owns the omnibus via a
+    non-primary link, and the trade-match logic uses
+    `comic.collected_issues` to mark every contained issue as owned.
+    Without the multi-series query, /series/{id} for KotOR singles
+    would show 0/52 even when the user owns the omnibus that
+    collects them all.
     """
     if not series_ids:
         return {}
@@ -140,24 +145,41 @@ async def compute_progress(
     if not series_rows:
         return {}
 
+    # Build a (series_id → list[Comic]) map by walking BOTH the
+    # primary FK and the ComicSeries link table. We can't do this in
+    # one bulk query without a UNION because the same comic might
+    # legitimately be linked to multiple series — per-series dedup
+    # via a set of (series_id, comic_id) tuples is the simplest path.
+    from app.models import ComicSeries
     relevant_ids = [s.id for s in series_rows]
+    comics_by_series: dict[int, dict[int, Comic]] = {sid: {} for sid in relevant_ids}
 
-    # All comics for those series in one query, grouped per-series client-side.
-    comics_rows = (
+    # Path 1: primary FK matches.
+    primary_rows = (
         await session.exec(
             select(Comic).where(Comic.series_id.in_(relevant_ids))
         )
     ).all()
-    comics_by_series: dict[int, list[Comic]] = {}
-    for c in comics_rows:
-        comics_by_series.setdefault(c.series_id, []).append(c)
+    for c in primary_rows:
+        comics_by_series[c.series_id][c.id] = c
+
+    # Path 2: link-table matches.
+    link_rows = (
+        await session.exec(
+            select(Comic, ComicSeries.series_id)
+            .join(ComicSeries, ComicSeries.comic_id == Comic.id)
+            .where(ComicSeries.series_id.in_(relevant_ids))
+        )
+    ).all()
+    for c, sid in link_rows:
+        comics_by_series[sid][c.id] = c
 
     out: dict[int, Progress] = {}
     for series in series_rows:
         expected = parse_expected(series)
         if not expected:
             continue
-        comics = comics_by_series.get(series.id, [])
+        comics = list(comics_by_series.get(series.id, {}).values())
         _pairs, owned = match_owned(expected, comics)
         out[series.id] = Progress(owned=owned, total=len(expected))
     return out
