@@ -69,6 +69,21 @@
             </option>
           {% endfor %}
         </select>
+        <select name="sort" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs"
+                title="Sort by">
+          {% set sort_opts = [
+            ('added_desc',      'Recently added'),
+            ('added_asc',       'Oldest added first'),
+            ('title_asc',       'Title A → Z'),
+            ('title_desc',      'Title Z → A'),
+            ('cover_date_desc', 'Cover date — newest'),
+            ('cover_date_asc',  'Cover date — oldest'),
+            ('series_asc',      'Series + issue #'),
+          ] %}
+          {% for v, label in sort_opts %}
+            <option value="{{ v }}" {% if sort == v %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
       </div>
 
       {# Reusable checkbox-list block. Wrapped in <details> so each facet

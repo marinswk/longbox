@@ -159,18 +159,21 @@ async def series_index(
     status: list[str] = Query(default=[]),
     q: str = Query(default=""),
     sort: str = Query(default="name_asc"),
+    group: str = Query(default="none"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
 ) -> HTMLResponse:
     if sort not in _SORT_VALUES:
         sort = "name_asc"
+    if group not in _GROUP_VALUES:
+        group = "none"
     publisher = _drop_empty(publisher)
     fandom = _drop_empty(fandom)
     status = [s for s in _drop_empty(status) if s in _STATUS_VALUES]
     ctx = await _build_series_index(
         session,
         publishers=publisher, fandoms=fandom, statuses=status,
-        q=q, sort=sort, page=page, page_size=page_size,
+        q=q, sort=sort, page=page, page_size=page_size, group=group,
     )
     return templates.TemplateResponse(request, "series_index.html", ctx)
 
@@ -184,18 +187,21 @@ async def series_index_grid(
     status: list[str] = Query(default=[]),
     q: str = Query(default=""),
     sort: str = Query(default="name_asc"),
+    group: str = Query(default="none"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
 ) -> HTMLResponse:
     if sort not in _SORT_VALUES:
         sort = "name_asc"
+    if group not in _GROUP_VALUES:
+        group = "none"
     publisher = _drop_empty(publisher)
     fandom = _drop_empty(fandom)
     status = [s for s in _drop_empty(status) if s in _STATUS_VALUES]
     ctx = await _build_series_index(
         session,
         publishers=publisher, fandoms=fandom, statuses=status,
-        q=q, sort=sort, page=page, page_size=page_size,
+        q=q, sort=sort, page=page, page_size=page_size, group=group,
     )
     return templates.TemplateResponse(
         request, "partials/_series_grid.html", ctx,
@@ -625,7 +631,13 @@ async def series_merge(
 # ---------------------------------------------------------------------------
 
 _STATUS_VALUES = ("complete", "in_progress", "untracked")
-_SORT_VALUES = ("name_asc", "name_desc", "count_desc", "completion_desc")
+_SORT_VALUES = (
+    "name_asc", "name_desc",
+    "count_desc", "count_asc",
+    "completion_desc", "completion_asc",
+    "added_desc", "added_asc",
+)
+_GROUP_VALUES = ("none", "publisher", "fandom", "status")
 
 
 def _drop_empty(values: list[str]) -> list[str]:
@@ -738,20 +750,56 @@ def _series_status(progress) -> str:
 
 
 def _sort_rows(rows: list[dict], how: str) -> list[dict]:
+    def _name(r):
+        return (r["series"].name or "").lower()
     if how == "name_desc":
-        return sorted(rows, key=lambda r: (r["series"].name or "").lower(), reverse=True)
+        return sorted(rows, key=_name, reverse=True)
     if how == "count_desc":
-        return sorted(rows, key=lambda r: (-r["comic_count"], (r["series"].name or "").lower()))
+        return sorted(rows, key=lambda r: (-r["comic_count"], _name(r)))
+    if how == "count_asc":
+        return sorted(rows, key=lambda r: (r["comic_count"], _name(r)))
     if how == "completion_desc":
-        return sorted(
-            rows,
-            key=lambda r: (
-                -(r["progress_pct"] if r["progress_pct"] is not None else -1),
-                -r["comic_count"],
-                (r["series"].name or "").lower(),
-            ),
-        )
-    return sorted(rows, key=lambda r: (r["series"].name or "").lower())
+        return sorted(rows, key=lambda r: (
+            -(r["progress_pct"] if r["progress_pct"] is not None else -1),
+            -r["comic_count"], _name(r),
+        ))
+    if how == "completion_asc":
+        # Untracked (no progress) goes last; among tracked, least-complete first.
+        return sorted(rows, key=lambda r: (
+            r["progress_pct"] if r["progress_pct"] is not None else 101,
+            -r["comic_count"], _name(r),
+        ))
+    if how == "added_desc":
+        # "Recently added" → series with the highest id (latest created).
+        return sorted(rows, key=lambda r: (-r["series"].id, _name(r)))
+    if how == "added_asc":
+        return sorted(rows, key=lambda r: (r["series"].id, _name(r)))
+    return sorted(rows, key=_name)
+
+
+def _group_series_rows(rows: list[dict], how: str) -> list[dict]:
+    """Bucket the series rows by publisher / fandom / status (or
+    pass through ungrouped). Returns a list of `{label, items}` dicts
+    mirroring the library grid's grouping shape so the template can
+    reuse the same render pattern."""
+    if how == "none" or not rows:
+        return [{"label": None, "items": rows}]
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        if how == "publisher":
+            label = r["publisher"].name if r.get("publisher") else "(no publisher)"
+        elif how == "fandom":
+            label = (r.get("fandom") or "(no fandom)").title()
+        elif how == "status":
+            label = {
+                "complete": "Complete",
+                "in_progress": "In progress",
+                "untracked": "Untracked",
+            }.get(r["status"], r["status"])
+        else:
+            label = "(other)"
+        buckets.setdefault(label, []).append(r)
+    return [{"label": k, "items": v} for k, v in sorted(buckets.items(), key=lambda kv: kv[0] or "")]
 
 
 async def _build_series_index(
@@ -764,6 +812,7 @@ async def _build_series_index(
     sort: str,
     page: int,
     page_size: int,
+    group: str = "none",
 ) -> dict:
     """Filter → enrich → status-filter → sort → paginate.
 
@@ -819,6 +868,11 @@ async def _build_series_index(
     for r in page_rows:
         r["cover_urls"] = covers_by_id.get(r["series"].id, [])
 
+    # Bucket the page rows by the requested grouping. The template
+    # renders `groups` as a list of `{label, items}` sections; for the
+    # `none` mode it's a single section with `label=None`.
+    groups = _group_series_rows(page_rows, group)
+
     pub_facets: Counter = Counter()
     fan_facets: Counter = Counter()
     status_facets: Counter = Counter()
@@ -835,12 +889,14 @@ async def _build_series_index(
         "page": page,
         "page_count": page_count,
         "page_size": page_size,
+        "groups": groups,
         "selected": {
             "publishers": list(publishers),
             "fandoms": list(fandoms),
             "statuses": list(statuses),
             "q": q,
             "sort": sort,
+            "group": group,
         },
         "facets": {
             "publishers": pub_facets.most_common(),

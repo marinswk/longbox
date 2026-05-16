@@ -41,6 +41,20 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 GROUP_VALUES = {"none", "series", "publisher", "year"}
 
+# User-facing sort modes for the library grid. Maps to ORDER BY
+# clauses inside `_query_page`. `added_desc` is the legacy default
+# (newest comic first); keep it at the top of the dropdown so the
+# default behaviour doesn't change.
+SORT_VALUES = {
+    "added_desc",       # legacy: Comic.id DESC (proxy for date added)
+    "added_asc",
+    "title_asc",
+    "title_desc",
+    "cover_date_asc",
+    "cover_date_desc",
+    "series_asc",       # by series name, then issue_number for stable order
+}
+
 
 def _drop_empty(values: list[str]) -> list[str]:
     """Filter out empty-string entries — they come from "All …" dropdown
@@ -188,6 +202,7 @@ async def _query_page(
     storages=(),
     fandoms=(),
     include_tracked: bool = False,
+    sort: str = "added_desc",
 ):
     base = (
         select(Comic, Series, Publisher)
@@ -220,7 +235,22 @@ async def _query_page(
 
     page = max(page, 1)
     offset = (page - 1) * page_size
-    stmt = base.order_by(Comic.id.desc()).offset(offset).limit(page_size)
+    # Resolve the sort mode. `added_desc` is the legacy default; the
+    # tie-break is always Comic.id DESC so two comics with the same
+    # cover_date / title don't shuffle between page renders.
+    sort_clauses_map = {
+        "added_desc":      [Comic.id.desc()],
+        "added_asc":       [Comic.id.asc()],
+        "title_asc":       [Comic.title.asc().nullslast(), Comic.id.desc()],
+        "title_desc":      [Comic.title.desc().nullslast(), Comic.id.desc()],
+        "cover_date_asc":  [Comic.cover_date.asc().nullslast(), Comic.id.desc()],
+        "cover_date_desc": [Comic.cover_date.desc().nullslast(), Comic.id.desc()],
+        "series_asc":      [Series.name.asc().nullslast(),
+                            Comic.issue_number.asc().nullslast(),
+                            Comic.id.desc()],
+    }
+    order_clauses = sort_clauses_map.get(sort, sort_clauses_map["added_desc"])
+    stmt = base.order_by(*order_clauses).offset(offset).limit(page_size)
     rows = (await session.exec(stmt)).all()
     items = [
         {"comic": comic, "series": ser, "publisher": pub}
@@ -337,6 +367,7 @@ async def library_page(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
     tracked: str = Query(default=""),
+    sort: str = Query(default="added_desc"),
 ) -> HTMLResponse:
     if group not in GROUP_VALUES:
         group = "none"
@@ -351,6 +382,8 @@ async def library_page(
     storage = _drop_empty(storage)
     fandom = _drop_empty(fandom)
     include_tracked = tracked.lower() in ("1", "true", "on", "yes")
+    if sort not in SORT_VALUES:
+        sort = "added_desc"
     items, total = await _query_page(
         session,
         publishers=publisher,
@@ -368,6 +401,7 @@ async def library_page(
         storages=storage,
         fandoms=fandom,
         include_tracked=include_tracked,
+        sort=sort,
     )
     facets = await _facets(
         session, publishers=publisher, series_names=series,
@@ -383,6 +417,7 @@ async def library_page(
         read_statuses=read_status, storages=storage, fandoms=fandom,
     )
     ctx["include_tracked"] = include_tracked
+    ctx["sort"] = sort
     return templates.TemplateResponse(request, "library.html", ctx)
 
 
@@ -406,6 +441,7 @@ async def library_grid(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
     tracked: str = Query(default=""),
+    sort: str = Query(default="added_desc"),
 ) -> HTMLResponse:
     if group not in GROUP_VALUES:
         group = "none"
@@ -420,6 +456,8 @@ async def library_grid(
     storage = _drop_empty(storage)
     fandom = _drop_empty(fandom)
     include_tracked = tracked.lower() in ("1", "true", "on", "yes")
+    if sort not in SORT_VALUES:
+        sort = "added_desc"
     items, total = await _query_page(
         session,
         publishers=publisher,
@@ -437,6 +475,7 @@ async def library_grid(
         storages=storage,
         fandoms=fandom,
         include_tracked=include_tracked,
+        sort=sort,
     )
     ctx = _grid_context(
         items=items, total=total, page=page, page_size=page_size,

@@ -52,15 +52,32 @@
       <div class="space-y-2 pb-2">
         <input type="text" name="q" value="{{ selected.q }}" placeholder="🔎 series name"
                class="w-full rounded-lg border-2 border-black px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
-        <select name="sort" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs">
+        <select name="sort" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs"
+                title="Sort by">
           {% set sort_opts = [
-            ('name_asc', 'Name A → Z'),
-            ('name_desc', 'Name Z → A'),
-            ('count_desc', 'Most comics first'),
-            ('completion_desc', 'Most complete first'),
+            ('name_asc',         'Name A → Z'),
+            ('name_desc',        'Name Z → A'),
+            ('count_desc',       'Most comics first'),
+            ('count_asc',        'Fewest comics first'),
+            ('completion_desc',  'Most complete first'),
+            ('completion_asc',   'Least complete first'),
+            ('added_desc',       'Recently added'),
+            ('added_asc',        'Oldest added first'),
           ] %}
           {% for v, label in sort_opts %}
             <option value="{{ v }}" {% if selected.sort == v %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <select name="group" class="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs"
+                title="Group by">
+          {% set group_opts = [
+            ('none',      'No grouping'),
+            ('publisher', 'Group by publisher'),
+            ('fandom',    'Group by fandom'),
+            ('status',    'Group by status'),
+          ] %}
+          {% for v, label in group_opts %}
+            <option value="{{ v }}" {% if selected.group == v %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>

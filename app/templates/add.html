@@ -139,7 +139,81 @@
   </details>
 </section>
 
+{# After a barcode scan on mobile, #flow gets transformed into a
+   sticky bottom sheet so the user sees the picker / confirm form
+   without having to scroll past the camera viewport area. The
+   `lb-scan-sheet` class is added by the scanner JS on a successful
+   scan and removed when the user hits the close button or saves.
+   On desktop / when not in sheet mode, #flow renders inline as
+   before. #}
+<style>
+  .lb-scan-sheet {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 40;
+    max-height: 90vh;
+    overflow-y: auto;
+    margin-top: 0 !important;
+    padding: 1rem;
+    background: #faf6ec;
+    border-top: 4px solid #000;
+    border-radius: 1.5rem 1.5rem 0 0;
+    box-shadow: 0 -6px 0 0 #000;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  body.lb-sheet-open { overflow: hidden; }
+  .lb-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgba(0, 0, 0, 0.5);
+  }
+</style>
+<div id="flow-backdrop" class="lb-sheet-backdrop hidden" onclick="lbExitScanSheetMode()"></div>
+<button id="flow-sheet-close" type="button"
+        onclick="lbExitScanSheetMode()"
+        class="fixed right-4 z-50 hidden rounded-lg border-4 border-black bg-crawl px-3 py-2 text-sm font-semibold shadow-[3px_3px_0_0_#000]"
+        style="top: calc(env(safe-area-inset-top, 0px) + 1rem);">
+  ✕ Close
+</button>
 <section id="flow" class="mt-8"></section>
+
+<script>
+  // Scan-sheet mode: turn #flow into a fixed bottom sheet so the
+  // post-scan picker / confirm form floats above the page instead
+  // of forcing the user to scroll down past the camera scroll
+  // position. The sheet auto-closes on Save success (detected via
+  // the saved partial's marker class).
+  window.lbEnterScanSheetMode = function () {
+    const flow = document.getElementById('flow');
+    flow.classList.add('lb-scan-sheet');
+    document.getElementById('flow-backdrop').classList.remove('hidden');
+    document.getElementById('flow-sheet-close').classList.remove('hidden');
+    document.body.classList.add('lb-sheet-open');
+  };
+  window.lbExitScanSheetMode = function () {
+    const flow = document.getElementById('flow');
+    flow.classList.remove('lb-scan-sheet');
+    flow.innerHTML = '';
+    document.getElementById('flow-backdrop').classList.add('hidden');
+    document.getElementById('flow-sheet-close').classList.add('hidden');
+    document.body.classList.remove('lb-sheet-open');
+    const input = document.getElementById('identifier');
+    if (input) input.value = '';
+  };
+  // Auto-close the sheet when the save-success partial lands.
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (e.target && e.target.id === 'flow') {
+      const flow = e.target;
+      if (flow.classList.contains('lb-scan-sheet')
+          && flow.querySelector('[data-scan-done]')) {
+        // Give the user a beat to see the success message, then
+        // auto-dismiss so they can scan another comic.
+        setTimeout(window.lbExitScanSheetMode, 1500);
+      }
+    }
+  });
+</script>
 
 <script>
   // Fullscreen barcode scanner. Two engines:
@@ -473,10 +547,13 @@
       // Haptic confirmation. Most Android phones honour navigator.vibrate;
       // iOS Safari ignores it but the visual feedback is enough on iOS.
       try { navigator.vibrate && navigator.vibrate([40, 30, 40]); } catch {}
-      // Brief pause so the user sees the confirmation, then close +
-      // submit the lookup form.
+      // Brief pause so the user sees the confirmation, then close
+      // the camera + submit the lookup form. On mobile we open the
+      // scan-sheet first so the picker results land in a fixed
+      // bottom sheet instead of below-the-fold #flow.
       setTimeout(() => {
         stop().then(() => {
+          if (window.lbEnterScanSheetMode) window.lbEnterScanSheetMode();
           if (window.htmx) htmx.trigger(form, 'submit');
           else form.requestSubmit();
         });
