@@ -529,6 +529,44 @@ _NUMBERED_VOLUME_RX = re.compile(
 )
 
 
+# Generic prettytable row pattern: `| <optional style> | <number> || [[Article|...]] || ...`
+# Matches articles whose title doesn't fit the "Series base + number" shape
+# the series-base extractor below needs — covers cases like:
+#
+#   |1||[[Darth Maul (2000) 1|...]]       ← (2000) in the middle, not trailing
+#   |1||[[Jedi: Mace Windu|...]]          ← no trailing number at all
+#   |1||[[..., Blood of the Empire Act 1: Shades of the Sith|...]]  ← Act + subtitle
+#
+# The captured group is the article title (everything up to the
+# wikilink's display-text pipe or its closing bracket).
+_TABLE_ROW_ISSUE_RX = re.compile(
+    r"\|\s*"                  # opening cell pipe
+    r"(?:[^|\n]*?\|)?"         # optional style attribute + inner pipe
+    r"\s*\d+[A-Za-z]?\s*"      # numeric issue cell value
+    r"\|\|\s*"                 # cell separator
+    r"\[\[([^\]\|\n]+)"        # opening wikilink — capture article title
+)
+
+
+def _extract_table_row_issues(body: str) -> list[str]:
+    """Walk an Issues section body for prettytable rows where the
+    first cell is an issue number and the next cell is a wikilinked
+    article. Captures the article title, skips File:/Category:/Image:
+    namespace links. Returns first-seen-order, deduplicated."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _TABLE_ROW_ISSUE_RX.finditer(body):
+        title = m.group(1).strip()
+        low = title.lower()
+        if low.startswith(("file:", "image:", "category:")):
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(title)
+    return out
+
+
 def _extract_series_issue_titles(body: str, series_article_title: str) -> list[str]:
     """For old-style series articles (Knight Errant, Jedi vs. Sith,
     etc.) the ===Issues=== section is a prettytable where each row
@@ -1107,6 +1145,14 @@ async def get_series_issues(article_title: str) -> list[str]:
         # Jedi vs. Sith, and friends. Filter wikilinks whose article
         # title starts with the series base name and ends in a digit.
         items = _extract_series_issue_titles(body, article_title)
+        if items:
+            return items
+        # Generic prettytable rows: `|N||[[Article|...]]`. Catches
+        # series whose issue articles don't follow the
+        # `<series base> <number>` shape — Darth Maul (2000) has
+        # `(2000)` mid-title, Jedi (one-shots) has no trailing
+        # number, Blood of the Empire uses "Act N: Subtitle".
+        items = _extract_table_row_issues(body)
         if items:
             return items
 

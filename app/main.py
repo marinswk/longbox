@@ -27,6 +27,7 @@ async def lifespan(_app: FastAPI):
         backfill_inferred_series_from_collected_issues,
         backfill_merge_duplicate_series, backfill_normalize_format,
         backfill_prune_dangling_comicseries,
+        backfill_prune_empty_inferred_series,
         backfill_strip_multiline_names, backfill_wookieepedia_fandom,
     )
 
@@ -61,6 +62,11 @@ async def lifespan(_app: FastAPI):
     # catches up legacy omnibuses / TPBs saved before save-time
     # inference landed.
     await backfill_inferred_series_from_collected_issues()
+    # Sweep up stale empty-expected-issues inference rows left over
+    # from before the "skip when issues=[]" guard. Runs AFTER the
+    # inference backfill so anything the inferrer just successfully
+    # populated stays. Idempotent.
+    await backfill_prune_empty_inferred_series()
     yield
 
 

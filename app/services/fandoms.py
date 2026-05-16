@@ -200,6 +200,51 @@ async def backfill_wookieepedia_fandom() -> int:
         return int(result.rowcount or 0)
 
 
+async def backfill_prune_empty_inferred_series() -> int:
+    """Drop Series rows that look like a stale inference artefact:
+    no expected_issues, not the primary FK of any comic, and only
+    multi-series link-table references (or none at all).
+
+    Created by `_attach_inferred_series` before we added the "skip
+    when issues=[]" guard. Manifestation: rows like "Star Wars: The
+    Old Republic, Blood of the Empire" or "Star Wars: The Old
+    Republic, Threat of Peace" that appeared on /comic/{id}'s
+    SERIES section as 0/0 chips with no real value.
+
+    Idempotent. Runs after the inferrer backfill so any rows the
+    inferrer just touched and successfully populated stay.
+
+    Returns the number of series rows removed.
+    """
+    from sqlalchemy import text
+    async with SessionLocal() as session:
+        # The query: a Series is "empty-inferred" iff
+        #   (expected_issues IS NULL OR = '') AND
+        #   no Comic has series_id = this.id AND
+        #   no comic primary-FK references it.
+        # We KEEP rows with expected_issues set (those are real
+        # tracking targets, even if they have no owned comics yet —
+        # the user may have added them via manual link).
+        # We also KEEP rows that are SOMEONE's primary series.
+        rows = await session.exec(text(
+            "DELETE FROM comicseries WHERE series_id IN ("
+            "  SELECT s.id FROM series s "
+            "  WHERE (s.expected_issues IS NULL OR s.expected_issues = '') "
+            "    AND NOT EXISTS (SELECT 1 FROM comic c WHERE c.series_id = s.id)"
+            ")"
+        ))
+        link_n = int(rows.rowcount or 0)
+        result = await session.exec(text(
+            "DELETE FROM series WHERE id IN ("
+            "  SELECT s.id FROM series s "
+            "  WHERE (s.expected_issues IS NULL OR s.expected_issues = '') "
+            "    AND NOT EXISTS (SELECT 1 FROM comic c WHERE c.series_id = s.id)"
+            ")"
+        ))
+        await session.commit()
+        return int(result.rowcount or 0)
+
+
 async def backfill_inferred_series_from_collected_issues() -> int:
     """For every Comic with a non-empty `collected_issues` blob, derive
     the implied series names from each `<Series> <Issue Number>` entry

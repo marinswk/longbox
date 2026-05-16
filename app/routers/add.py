@@ -353,6 +353,13 @@ async def _attach_inferred_series(comic_id: int) -> None:
                 guess_row = (await session.exec(
                     select(Series).where(Series.name == group.name_guess)
                 )).first()
+            # Don't auto-create a brand-new Series row when the
+            # canonical article yields no issues — it would just
+            # show up as a useless 0/0 entry in the library. Both
+            # existing-row paths (rename guess → canonical, update
+            # canonical) still run so we don't drop useful state.
+            if existing is None and guess_row is None and not issues:
+                continue
 
             if existing is None and guess_row is not None:
                 # Rename the guess row in place. Carries over all the

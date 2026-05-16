@@ -45,4 +45,18 @@
     </label>
     <div id="comic-series-search-results" class="mt-1"></div>
   </div>
+
+  {# Re-run the inferrer on demand. The user hits this after the
+     parser has been improved, or after editing the comic's
+     collected_issues, to refresh the multi-series links + sweep
+     empty/stale series rows. #}
+  <form class="mt-3"
+        hx-post="/comic/{{ comic_id }}/rederive-series"
+        hx-confirm="Re-run series inference from this comic's collected_issues? Existing series stay; empty stale ones get pruned."
+        hx-swap="none">
+    <button type="submit"
+            class="w-full rounded-md border-2 border-black bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-[2px_2px_0_0_#000] hover:bg-paper">
+      ↻ Re-derive series from collected issues
+    </button>
+  </form>
 </div>

@@ -455,6 +455,35 @@ async def comic_refresh(
     return Response(status_code=204, headers={"HX-Refresh": "true"})
 
 
+@router.post("/comic/{comic_id}/rederive-series")
+async def comic_rederive_series(
+    comic_id: int, session: SessionDep,
+) -> Response:
+    """Re-run the multi-series inference + empty-series cleanup for
+    this comic. Useful when the user manually edits collected_issues
+    or when the parser has been improved since the original save —
+    saves them from having to delete + re-add the comic.
+
+    Idempotent: existing canonical Series rows stay; only adds the
+    ones the current parser can resolve from the comic's
+    collected_issues + sweeps any leftover empty rows.
+    """
+    comic = await session.get(Comic, comic_id)
+    if comic is None:
+        raise HTTPException(status_code=404, detail="comic not found")
+
+    from app.routers.add import _attach_inferred_series
+    from app.services.fandoms import backfill_prune_empty_inferred_series
+
+    await _attach_inferred_series(comic_id)
+    await backfill_prune_empty_inferred_series()
+
+    return Response(
+        status_code=204,
+        headers={"HX-Refresh": "true"},
+    )
+
+
 @router.post("/comic/{comic_id}/delete")
 async def comic_delete(comic_id: int, session: SessionDep) -> Response:
     comic = await session.get(Comic, comic_id)

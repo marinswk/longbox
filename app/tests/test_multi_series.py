@@ -318,7 +318,10 @@ def test_save_auto_attaches_inferred_series_for_omnibus_like_comic():
             )
         return None
 
+    async def fake_get_series_issues(article):
+        return [f"{article} stub-issue"]  # non-empty so the inferrer creates the row
     with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         patch("app.services.wookieepedia.get_series_issues", side_effect=fake_get_series_issues), \
          _client() as client:
         cid = _save(client, title="Inf Omnibus",
                     isbn_13="9789000030001",
@@ -370,7 +373,10 @@ def test_inference_is_idempotent():
             )
         return None
 
+    async def fake_get_series_issues(article):
+        return [f"{article} stub-issue"]
     with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         patch("app.services.wookieepedia.get_series_issues", side_effect=fake_get_series_issues), \
          _client() as client:
         cid = _save(client, title="Idem Inf",
                     isbn_13="9789000030101",
@@ -427,7 +433,10 @@ def test_inferred_series_resolves_to_canonical_article_title():
             )
         return None
 
+    async def fake_get_series_issues(article):
+        return [f"{article} stub-issue"]
     with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         patch("app.services.wookieepedia.get_series_issues", side_effect=fake_get_series_issues), \
          _client() as client:
         cid = _save(client, title="Canonical Probe",
                     isbn_13="9789000030301",
@@ -589,7 +598,10 @@ def test_inferred_series_inherits_primary_publisher():
             )
         return None
 
+    async def fake_get_series_issues(article):
+        return [f"{article} stub-issue"]
     with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         patch("app.services.wookieepedia.get_series_issues", side_effect=fake_get_series_issues), \
          _client() as client:
         cid = _save(client, title="Pub Inh",
                     isbn_13="9789000030201",
