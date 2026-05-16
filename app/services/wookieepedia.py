@@ -623,18 +623,49 @@ def _extract_storycite_label(line: str) -> Optional[str]:
 
 
 def _extract_bullet_targets(body: str) -> list[str]:
-    """Walk a wikitext block of `*`-bullets and return a usable target
-    string per bullet — preferring (in order):
+    """Walk a wikitext block of bullet lines and return a usable
+    target string per bullet — preferring (in order):
         1. the article title from a `[[Foo|Bar]]` / `[[Foo]]` wikilink;
         2. the `story=` (or `book=`) field of a `{{StoryCite|…}}` template;
         3. the cleaned plain-text rendering of the line.
+
+    Recognises both:
+      * plain `*` bullets ("standard" Wookieepedia list).
+      * `:*` / `:**` indented bullets used on series articles like
+        "Star Wars Infinities" where issues sit one indent level
+        below their sub-series header:
+            *''[[Series sub-section]]''
+            :*[[Issue 1]]
+            :*[[Issue 2]]
+
+    When BOTH a `*` header and `:*` issue lines are present, prefer
+    the issues — they're the trackable entries. If only top-level
+    `*` headers exist, fall back to them so simpler articles still
+    parse.
     """
-    out: list[str] = []
+    issue_lines: list[str] = []   # `:*` indented = actual issues
+    header_lines: list[str] = []  # `*`-only = section headers
     for raw in body.splitlines():
         line = raw.strip()
-        if not line.startswith("*"):
+        if not line:
             continue
-        line = re.sub(r"^\*+\s*", "", line)
+        # Bullet prefixes can mix `:` (indent) and `*` (bullet marker).
+        # Recognise any leading run of those chars, but require at
+        # least one actual `*` so plain definition-list indents like
+        # `:foo` don't get picked up.
+        m = re.match(r"^([:*]+)\s*", line)
+        if not m or "*" not in m.group(1):
+            continue
+        prefix = m.group(1)
+        if ":" in prefix:
+            issue_lines.append(line)
+        else:
+            header_lines.append(line)
+
+    chosen = issue_lines if issue_lines else header_lines
+    out: list[str] = []
+    for raw in chosen:
+        line = re.sub(r"^[:*]+\s*", "", raw)
         link = _LINK_ARTICLE.search(line)
         if link:
             out.append(link.group(1).strip())
