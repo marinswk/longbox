@@ -78,7 +78,20 @@ def _apply_filters(
     if publishers:
         stmt = stmt.where(Publisher.name.in_(publishers))
     if series_names:
-        stmt = stmt.where(Series.name.in_(series_names))
+        # Match by EITHER the primary `series_id` FK OR the
+        # multi-series link table. The Series join in the base query
+        # only sees the primary relationship, which would otherwise
+        # hide omnibuses / TPBs whose membership in this series is
+        # tracked as a non-primary inferred link.
+        from app.models import ComicSeries as _CS
+        target_ids = select(Series.id).where(Series.name.in_(series_names))
+        linked_comics = select(_CS.comic_id).where(_CS.series_id.in_(target_ids))
+        stmt = stmt.where(
+            or_(
+                Series.name.in_(series_names),
+                Comic.id.in_(linked_comics),
+            )
+        )
     if years:
         stmt = stmt.where(extract("year", Comic.cover_date).in_(years))
     if formats:

@@ -7,10 +7,25 @@
     <h2 class="min-w-0 flex-1 break-words font-display text-3xl tracking-wide">
       {{ series.name }}
     </h2>
-    <a href="/library?series={{ series.name|urlencode }}"
-       class="shrink-0 rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
-      Library →
-    </a>
+    <div class="shrink-0 flex items-center gap-2">
+      {# Wookieepedia link. source_id may carry a `#section` anchor
+         (e.g. "Epic Collection#Legends") to scope gallery extraction;
+         strip it for the wiki URL so the user lands on the umbrella
+         article. #}
+      {% if series.source == 'wookieepedia' and series.source_id %}
+        {% set wiki_article = series.source_id.split('#')[0] %}
+        <a href="https://starwars.fandom.com/wiki/{{ wiki_article|replace(' ', '_')|urlencode }}"
+           target="_blank" rel="noopener noreferrer"
+           title="Open this series' article on Wookieepedia"
+           class="rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+          Wookieepedia ↗
+        </a>
+      {% endif %}
+      <a href="/library?series={{ series.name|urlencode }}"
+         class="rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
+        Library →
+      </a>
+    </div>
   </div>
   {% if publisher %}
     <p class="mt-1 text-sm text-gray-700">{{ publisher.name }}</p>
