@@ -241,6 +241,180 @@ def test_comic_detail_shows_series_management_widget():
         assert "Add to another series" in r.text
 
 
+# ─────────────────────  Auto-inference from collected_issues  ───────────── #
+
+
+def test_derive_series_names_extracts_unique_series_from_issue_list():
+    """Unit-test the parser directly. A typical omnibus collected-
+    issues blob mixes multiple underlying singles series, plus one-
+    shots and prose. We want the distinct singles-series names back,
+    de-duped case-insensitively, in first-seen order."""
+    from app.services.collected_issues import derive_series_names
+
+    raw = (
+        "Knights of the Old Republic 0\n"
+        "The Taris Holofeed: Prime Edition\n"  # one-shot — no trailing num
+        "Knights of the Old Republic 1\n"
+        "Knights of the Old Republic 2\n"
+        "Knights of the Old Republic: War 1\n"
+        "Knights of the Old Republic: War 2\n"
+        "Republic 78\n"
+        "Republic 79\n"
+        "Purge (comic book)\n"                  # no trailing num
+        "KNIGHTS OF THE OLD REPUBLIC 3\n"        # case-insensitive dupe
+    )
+    assert derive_series_names(raw) == [
+        "Knights of the Old Republic",
+        "Knights of the Old Republic: War",
+        "Republic",
+    ]
+
+
+def test_derive_series_names_handles_letter_suffix_issue_numbers():
+    """Marvel-style "12A" / "0B" variant issue numbers should still
+    parse to the series name."""
+    from app.services.collected_issues import derive_series_names
+
+    raw = "Star Wars 12A\nStar Wars 12B\nStar Wars 13\n"
+    assert derive_series_names(raw) == ["Star Wars"]
+
+
+def test_derive_series_names_returns_empty_for_singles_and_prose():
+    """Singles comics (empty collected_issues) and free-form prose
+    ("COLLECTING: A 1-5, B 1") shouldn't produce any inferred
+    series."""
+    from app.services.collected_issues import derive_series_names
+
+    assert derive_series_names(None) == []
+    assert derive_series_names("") == []
+    assert derive_series_names("COLLECTING: Star Wars 1-50, Vader 1") == []
+
+
+def test_save_auto_attaches_inferred_series_for_omnibus_like_comic():
+    """The full save → inference flow: when /add/save lands a comic
+    whose collected_issues blob references multiple underlying
+    series, the inference background task should attach the comic to
+    each of them — without the user doing anything.
+
+    We exercise this by writing a non-empty `collected_issues` value
+    after save and then running the inferrer directly (the background
+    task already does this; calling it here makes the assertion
+    deterministic without sleeping on the BackgroundTasks scheduler).
+    """
+    from app.routers.add import _attach_inferred_series
+    from app.models import ComicSeries
+
+    with _client() as client:
+        cid = _save(client, title="Inf Omnibus",
+                    isbn_13="9789000030001",
+                    series="Inf Primary Series",
+                    publisher="Inf Pub")
+
+        # Fake an omnibus-shaped collected_issues blob.
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = (
+                    "Knights of the Old Republic INF 1\n"
+                    "Knights of the Old Republic INF 2\n"
+                    "Knights of the Old Republic: War INF 1\n"
+                )
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _linked_names():
+            async with SessionLocal() as session:
+                rows = (await session.exec(
+                    select(Series.name)
+                    .join(ComicSeries, ComicSeries.series_id == Series.id)
+                    .where(ComicSeries.comic_id == cid)
+                )).all()
+                return {r if isinstance(r, str) else r[0] for r in rows}
+        # Primary still there + the two inferred ones.
+        assert "Inf Primary Series" in asyncio.run(_linked_names())
+        names = asyncio.run(_linked_names())
+        assert "Knights of the Old Republic INF" in names
+        assert "Knights of the Old Republic: War INF" in names
+
+
+def test_inference_is_idempotent():
+    """Running the inferrer twice on the same comic shouldn't create
+    duplicate link rows."""
+    from app.routers.add import _attach_inferred_series
+    from app.models import ComicSeries
+    from sqlalchemy import func as _func
+
+    with _client() as client:
+        cid = _save(client, title="Idem Inf",
+                    isbn_13="9789000030101",
+                    series="Idem Inf Primary")
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = "Idem Inferred Series 1\nIdem Inferred Series 2\n"
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _count():
+            async with SessionLocal() as session:
+                return (await session.exec(
+                    select(_func.count())
+                    .select_from(ComicSeries)
+                    .where(ComicSeries.comic_id == cid)
+                )).first()
+        n = asyncio.run(_count())
+        n = n[0] if isinstance(n, tuple) else n
+        # Primary + exactly one inferred — no duplicates.
+        assert int(n) == 2
+
+
+def test_inferred_series_inherits_primary_publisher():
+    """Newly-created Series rows from inference should pick up the
+    publisher of the comic's primary series, so the library publisher
+    facet doesn't sprout a stray '(unset)' chip per inferred series."""
+    from app.routers.add import _attach_inferred_series
+
+    with _client() as client:
+        cid = _save(client, title="Pub Inh",
+                    isbn_13="9789000030201",
+                    series="Pub Inh Primary",
+                    publisher="Pub Inh Marvel")
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = "Pub Inferred Series 1\n"
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                ser = (await session.exec(
+                    select(Series).where(Series.name == "Pub Inferred Series")
+                )).first()
+                assert ser is not None
+                assert ser.publisher_id is not None
+                return ser.publisher_id
+        pub_id = asyncio.run(_check())
+        # Confirm publisher name matches what the comic's primary
+        # series carries.
+        async def _pub():
+            from app.models import Publisher
+            async with SessionLocal() as session:
+                return await session.get(Publisher, pub_id)
+        pub = asyncio.run(_pub())
+        assert pub.name == "Pub Inh Marvel"
+
+
 def test_comic_series_search_excludes_already_linked_series():
     """The typeahead shouldn't suggest a series the comic is already
     in — primary FK or link table."""

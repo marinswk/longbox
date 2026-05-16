@@ -200,6 +200,58 @@ async def backfill_wookieepedia_fandom() -> int:
         return int(result.rowcount or 0)
 
 
+async def backfill_inferred_series_from_collected_issues() -> int:
+    """For every Comic with a non-empty `collected_issues` blob, derive
+    the implied series names from each `<Series> <Issue Number>` entry
+    and attach the comic to every matching series via ComicSeries.
+    Idempotent — skips comics already linked to a given series.
+
+    Creates new Series rows for derived names that don't exist yet,
+    inheriting publisher_id from the comic's primary series. Returns
+    the total number of new link rows written across all comics.
+
+    Runs on every cold start so legacy data (omnibuses / TPBs saved
+    before the multi-series schema existed) auto-populates without
+    forcing the user to hit a refresh button on every comic.
+    """
+    # Late import to avoid the routers→services→routers cycle.
+    from app.routers.add import _attach_inferred_series
+
+    total = 0
+    async with SessionLocal() as session:
+        rows = (await session.exec(
+            select(Comic.id)
+            .where(Comic.collected_issues.is_not(None))
+            .where(Comic.collected_issues != "")
+        )).all()
+    comic_ids = [r if isinstance(r, int) else r[0] for r in rows]
+    # Run per-comic in its own session — `_attach_inferred_series`
+    # opens one internally — so a single misbehaving entry doesn't
+    # roll back the whole backfill batch.
+    for cid in comic_ids:
+        try:
+            # Count link rows before + after to know what we added.
+            from app.models import ComicSeries
+            async with SessionLocal() as session:
+                before_rows = (await session.exec(
+                    select(ComicSeries.series_id)
+                    .where(ComicSeries.comic_id == cid)
+                )).all()
+                before = len({r if isinstance(r, int) else r[0] for r in before_rows})
+            await _attach_inferred_series(cid)
+            async with SessionLocal() as session:
+                after_rows = (await session.exec(
+                    select(ComicSeries.series_id)
+                    .where(ComicSeries.comic_id == cid)
+                )).all()
+                after = len({r if isinstance(r, int) else r[0] for r in after_rows})
+            total += max(0, after - before)
+        except Exception:
+            # Best-effort; don't let one weird entry break startup.
+            continue
+    return total
+
+
 async def backfill_comic_series_links() -> int:
     """Mirror every Comic.series_id value into the ComicSeries link
     table so multi-series-aware views see the primary series too.

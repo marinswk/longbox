@@ -187,6 +187,74 @@ async def _download_and_store_cover(comic_id: int, remote_url: str) -> None:
         await session.commit()
 
 
+async def _attach_inferred_series(comic_id: int) -> None:
+    """Auto-attach a Comic to every singles-series implied by its
+    `collected_issues` list. Idempotent — skips series the comic is
+    already linked to (via either the primary FK or the link table).
+
+    For a typical Marvel omnibus that collects ~70 single issues
+    spanning 3 different ongoing series, this fires off 3 new
+    ComicSeries rows and (if needed) 3 new Series stubs. The user
+    then sees the omnibus on each underlying series' detail page
+    without having to type the names manually.
+
+    Series rows created here inherit the comic's publisher_id so the
+    library publisher facet doesn't get split-up.
+
+    Skipped if `collected_issues` is empty (singles, one-shots) or if
+    none of the entries match the `<Series> <Number>` shape (rare —
+    typically free-form prose like "COLLECTING: Foo 1-5").
+    """
+    from app.models import ComicSeries
+    from app.services.collected_issues import derive_series_names
+
+    async with SessionLocal() as session:
+        comic = await session.get(Comic, comic_id)
+        if comic is None:
+            return
+        names = derive_series_names(comic.collected_issues)
+        if not names:
+            return
+
+        # Snapshot existing links so we don't double-write.
+        existing_link_ids = {
+            r if isinstance(r, int) else r[0]
+            for r in (await session.exec(
+                select(ComicSeries.series_id)
+                .where(ComicSeries.comic_id == comic_id)
+            )).all()
+        }
+        primary_series_id = comic.series_id
+
+        # Inherit publisher from the comic's primary series when
+        # creating brand-new series rows.
+        publisher_id = None
+        if primary_series_id is not None:
+            primary = await session.get(Series, primary_series_id)
+            if primary is not None:
+                publisher_id = primary.publisher_id
+
+        for name in names:
+            existing = (await session.exec(
+                select(Series).where(Series.name == name)
+            )).first()
+            if existing is None:
+                existing = Series(name=name, publisher_id=publisher_id)
+                session.add(existing)
+                await session.flush()
+            if existing.id == primary_series_id:
+                continue  # already the primary link
+            if existing.id in existing_link_ids:
+                continue
+            session.add(ComicSeries(
+                comic_id=comic_id,
+                series_id=existing.id,
+                is_primary=False,
+            ))
+            existing_link_ids.add(existing.id)
+        await session.commit()
+
+
 async def _enrich_series_from_candidate(
     series_id: int, source: str, candidate_series: Optional[str],
     candidate_raw: Optional[dict],
@@ -553,6 +621,13 @@ async def add_save(
                 candidate.raw,
                 candidate.series_article_id,
             )
+
+        # Auto-attach to every underlying singles series implied by
+        # the collected_issues list. For omnibuses / TPBs this is
+        # what makes them appear on each contained series' detail
+        # page automatically, without the user typing names into the
+        # multi-series form. No-op for singles (empty collected_issues).
+        background.add_task(_attach_inferred_series, comic.id)
 
     price = None
     try:

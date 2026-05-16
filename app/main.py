@@ -23,9 +23,10 @@ async def lifespan(_app: FastAPI):
     import app.models  # noqa: F401  ensure tables are registered
     from app.services.cache import prune_expired
     from app.services.fandoms import (
-        backfill_comic_series_links, backfill_merge_duplicate_series,
-        backfill_normalize_format, backfill_strip_multiline_names,
-        backfill_wookieepedia_fandom,
+        backfill_comic_series_links,
+        backfill_inferred_series_from_collected_issues,
+        backfill_merge_duplicate_series, backfill_normalize_format,
+        backfill_strip_multiline_names, backfill_wookieepedia_fandom,
     )
 
     await run_migrations()
@@ -50,6 +51,11 @@ async def lifespan(_app: FastAPI):
     # multi-series-aware queries (series detail, comic-detail series
     # section) see the primary series link. Idempotent.
     await backfill_comic_series_links()
+    # Walk every comic with a `collected_issues` blob and auto-attach
+    # it to every singles series implied by the entries. Idempotent;
+    # catches up legacy omnibuses / TPBs saved before save-time
+    # inference landed.
+    await backfill_inferred_series_from_collected_issues()
     yield
 
 

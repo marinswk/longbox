@@ -138,6 +138,11 @@ async def apply_repick(
             await _ensure_tag(session, comic.id, candidate.canon)
     await _autotag_from_candidate(session, comic.id, candidate)
 
+    # Re-derive multi-series memberships from the refreshed
+    # collected_issues list. Idempotent.
+    from app.routers.add import _attach_inferred_series
+    await _attach_inferred_series(comic.id)
+
     # 5. Auto-prune the previous series if the move left it empty.
     pruned = False
     if old_series_id and old_series_id != new_series_id:

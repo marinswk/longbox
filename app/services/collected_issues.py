@@ -53,6 +53,53 @@ def _looks_like_article_title(s: str) -> bool:
     return True
 
 
+# Match a Wookieepedia-style "<Series Name> <Issue Number>" article
+# title, capturing the series-name portion. Issue numbers can be plain
+# integers, with an optional letter suffix ("12A"), or "0" (zero
+# issues are a real thing on Wookieepedia). The series name greedily
+# matches everything up to the LAST space-separated digit run.
+_SERIES_FROM_ISSUE = re.compile(
+    r"^(?P<series>.+?)\s+(?P<num>\d+[A-Za-z]?)$"
+)
+
+
+def derive_series_names(raw: str | None) -> list[str]:
+    """Walk a `collected_issues` blob and return the unique series
+    names implied by each `<Series> <Issue Number>` entry.
+
+    Used at save / refresh time to auto-attach TPBs and omnibuses to
+    every underlying singles series they collect — without the user
+    having to type each one into the multi-series form. Lines that
+    don't match the `<series> <issue-number>` shape (one-shots like
+    "The Taris Holofeed: Prime Edition", or prose like "COLLECTING:
+    Foo 1-5") are skipped silently.
+
+    Returns names in first-seen order. De-duped case-insensitively
+    so "Knights of the Old Republic" and "knights of the old
+    republic" collapse to a single entry (matching what
+    `Series.name` deduplication does).
+    """
+    if not raw:
+        return []
+    seen_norm: set[str] = set()
+    out: list[str] = []
+    for entry in parse_entries(raw):
+        if not entry.linkable:
+            continue
+        m = _SERIES_FROM_ISSUE.match(entry.text)
+        if not m:
+            continue
+        name = m.group("series").strip()
+        if not name:
+            continue
+        norm = name.casefold()
+        if norm in seen_norm:
+            continue
+        seen_norm.add(norm)
+        out.append(name)
+    return out
+
+
 def parse_entries(raw: str | None) -> list[CollectedEntry]:
     """Split `raw` on newlines and classify each non-empty entry.
 
