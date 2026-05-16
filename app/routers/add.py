@@ -192,28 +192,42 @@ async def _attach_inferred_series(comic_id: int) -> None:
     `collected_issues` list. Idempotent — skips series the comic is
     already linked to (via either the primary FK or the link table).
 
-    For a typical Marvel omnibus that collects ~70 single issues
-    spanning 3 different ongoing series, this fires off 3 new
-    ComicSeries rows and (if needed) 3 new Series stubs. The user
-    then sees the omnibus on each underlying series' detail page
-    without having to type the names manually.
+    Resolution strategy per inferred series group:
+      1. Fetch the SAMPLE issue article (e.g. "Knights of the Old
+         Republic 1") from Wookieepedia.
+      2. Read its `series=` infobox to get the canonical series-
+         article title (e.g. "Star Wars: Knights of the Old Republic
+         (comic series)"). That's what `wookieepedia.get_article`
+         returns as `candidate.series` after our hierarchical-bullet
+         parsing.
+      3. Find-or-create the Series by that canonical name. Stamp it
+         with `source = wookieepedia` + the article title as source_id
+         so /series/{id}/auto-link can pull the issue list directly
+         without further guessing.
 
-    Series rows created here inherit the comic's publisher_id so the
-    library publisher facet doesn't get split-up.
+    Fallback: when the issue article doesn't exist on Wookieepedia,
+    or the upstream lookup fails for any reason, we degrade to the
+    name-only behaviour (find-or-create by the trailing-number-
+    stripped guess). Better than skipping — the link still gets
+    made; the auto-link page can be used to fix the source_id later.
 
-    Skipped if `collected_issues` is empty (singles, one-shots) or if
-    none of the entries match the `<Series> <Number>` shape (rare —
-    typically free-form prose like "COLLECTING: Foo 1-5").
+    Series rows created here inherit the primary series' publisher_id
+    so the library publisher facet doesn't sprout stub-pubs.
+
+    Skipped entirely if `collected_issues` is empty (singles, one-
+    shots) or if none of the entries match the `<Series> <Number>`
+    shape.
     """
     from app.models import ComicSeries
-    from app.services.collected_issues import derive_series_names
+    from app.services.collected_issues import derive_inferred_series
+    from app.services import wookieepedia
 
     async with SessionLocal() as session:
         comic = await session.get(Comic, comic_id)
         if comic is None:
             return
-        names = derive_series_names(comic.collected_issues)
-        if not names:
+        groups = derive_inferred_series(comic.collected_issues)
+        if not groups:
             return
 
         # Snapshot existing links so we don't double-write.
@@ -226,24 +240,55 @@ async def _attach_inferred_series(comic_id: int) -> None:
         }
         primary_series_id = comic.series_id
 
-        # Inherit publisher from the comic's primary series when
-        # creating brand-new series rows.
         publisher_id = None
         if primary_series_id is not None:
             primary = await session.get(Series, primary_series_id)
             if primary is not None:
                 publisher_id = primary.publisher_id
 
-        for name in names:
+        for group in groups:
+            # Try to resolve the canonical Wookieepedia series article
+            # by sampling one issue. Cached via MetadataCache so the
+            # second omnibus that collects the same series pays no
+            # network cost.
+            canonical_name = group.name_guess
+            canonical_article: Optional[str] = None
+            try:
+                cand = await wookieepedia.get_article(group.sample_issue_title)
+            except Exception:
+                cand = None
+            if cand is not None and cand.series:
+                canonical_name = cand.series
+                # The issue infobox's series= field IS the article
+                # title (modulo the hierarchical-bullet shaving we do
+                # in `_pick_specific_series`). Use it as source_id so
+                # auto-link can fetch the issue list directly.
+                canonical_article = (
+                    cand.series_article_id or cand.series
+                )
+
             existing = (await session.exec(
-                select(Series).where(Series.name == name)
+                select(Series).where(Series.name == canonical_name)
             )).first()
             if existing is None:
-                existing = Series(name=name, publisher_id=publisher_id)
+                existing = Series(
+                    name=canonical_name,
+                    publisher_id=publisher_id,
+                    source="wookieepedia" if canonical_article else None,
+                    source_id=canonical_article,
+                )
                 session.add(existing)
                 await session.flush()
+            else:
+                # Stamp source/source_id on a previously-bare row that
+                # was originally created by name-only inference.
+                if canonical_article and not existing.source_id:
+                    existing.source = "wookieepedia"
+                    existing.source_id = canonical_article
+                    session.add(existing)
+
             if existing.id == primary_series_id:
-                continue  # already the primary link
+                continue
             if existing.id in existing_link_ids:
                 continue
             session.add(ComicSeries(

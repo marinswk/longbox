@@ -63,26 +63,37 @@ _SERIES_FROM_ISSUE = re.compile(
 )
 
 
-def derive_series_names(raw: str | None) -> list[str]:
-    """Walk a `collected_issues` blob and return the unique series
-    names implied by each `<Series> <Issue Number>` entry.
+@dataclass
+class InferredSeriesGroup:
+    """One distinct series implied by a TPB/omnibus's collected_issues.
 
-    Used at save / refresh time to auto-attach TPBs and omnibuses to
-    every underlying singles series they collect — without the user
-    having to type each one into the multi-series form. Lines that
-    don't match the `<series> <issue-number>` shape (one-shots like
-    "The Taris Holofeed: Prime Edition", or prose like "COLLECTING:
-    Foo 1-5") are skipped silently.
+    `name_guess` is the trailing-number-stripped portion — useful as a
+    fallback when we can't reach upstream to get the canonical name.
 
-    Returns names in first-seen order. De-duped case-insensitively
-    so "Knights of the Old Republic" and "knights of the old
-    republic" collapse to a single entry (matching what
-    `Series.name` deduplication does).
+    `sample_issue_title` is a real issue article title from the
+    collected_issues list. Callers pass it to
+    `wookieepedia.get_article(...)` to read the canonical series
+    article title off the issue's infobox — way more reliable than
+    name-matching, since the issue infobox's `series=` field is the
+    authoritative wikilink to the series page.
+    """
+    name_guess: str
+    sample_issue_title: str
+
+
+def derive_inferred_series(raw: str | None) -> list[InferredSeriesGroup]:
+    """Walk a `collected_issues` blob and return one entry per
+    unique implied series.
+
+    De-duped case-insensitively on the trailing-number-stripped name,
+    in first-seen order, so callers can drive a small fan-out of
+    Wookieepedia lookups (one per distinct series, not one per
+    issue) to discover canonical series article titles.
     """
     if not raw:
         return []
     seen_norm: set[str] = set()
-    out: list[str] = []
+    out: list[InferredSeriesGroup] = []
     for entry in parse_entries(raw):
         if not entry.linkable:
             continue
@@ -96,8 +107,17 @@ def derive_series_names(raw: str | None) -> list[str]:
         if norm in seen_norm:
             continue
         seen_norm.add(norm)
-        out.append(name)
+        out.append(InferredSeriesGroup(
+            name_guess=name, sample_issue_title=entry.text,
+        ))
     return out
+
+
+def derive_series_names(raw: str | None) -> list[str]:
+    """Backward-compat helper returning just the trailing-number-
+    stripped names. Prefer `derive_inferred_series` for new code so
+    you get the sample issue title needed for canonical resolution."""
+    return [g.name_guess for g in derive_inferred_series(raw)]
 
 
 def parse_entries(raw: str | None) -> list[CollectedEntry]:

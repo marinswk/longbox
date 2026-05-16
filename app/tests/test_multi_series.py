@@ -375,6 +375,115 @@ def test_inference_is_idempotent():
         assert int(n) == 2
 
 
+def test_inferred_series_resolves_to_canonical_article_title():
+    """The inferrer should look up the SAMPLE issue's article on
+    Wookieepedia and read its `series=` infobox to get the proper
+    article title — NOT just blindly trust the trailing-number-
+    stripped guess. The guess "Knights of the Old Republic" maps to
+    "Star Wars: Knights of the Old Republic (comic series)" on the
+    wiki, and that's what should end up in Series.name AND
+    Series.source_id (so auto-link can fetch the issue list)."""
+    from unittest.mock import patch
+    from app.routers.add import _attach_inferred_series
+    from app.services.schemas import LookupCandidate
+
+    async def fake_get_article(title):
+        # The inferrer should call us with a sample issue title — NOT
+        # the trailing-number-stripped guess. Verify and return what
+        # the real Wookieepedia infobox would yield.
+        if title == "Canonical Test Series CTS 1":
+            return LookupCandidate(
+                source="wookieepedia",
+                source_id=title,
+                title=title,
+                # `_pick_specific_series` resolves the level-1 wikilink
+                # in this issue article's `series=` infobox to a more
+                # specific name with the `(comic series)` disambiguator.
+                series="Star Wars: Canonical Test Series CTS (comic series)",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
+        cid = _save(client, title="Canonical Probe",
+                    isbn_13="9789000030301",
+                    series="CTS Primary")
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = (
+                    "Canonical Test Series CTS 1\n"
+                    "Canonical Test Series CTS 2\n"
+                    "Canonical Test Series CTS 3\n"
+                )
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                # The canonical title (not the guess) should be in the DB.
+                canonical = (await session.exec(
+                    select(Series).where(
+                        Series.name == "Star Wars: Canonical Test Series CTS (comic series)"
+                    )
+                )).first()
+                guess = (await session.exec(
+                    select(Series).where(Series.name == "Canonical Test Series CTS")
+                )).first()
+                return canonical, guess
+        canonical, guess = asyncio.run(_check())
+        # Canonical row exists and is properly stamped for auto-link.
+        assert canonical is not None
+        assert canonical.source == "wookieepedia"
+        # source_id is the SERIES ARTICLE TITLE (cand.series), not the
+        # sample issue title we used to look it up. That's what
+        # /series/{id}/auto-link expects to feed to get_series_issues.
+        assert canonical.source_id == "Star Wars: Canonical Test Series CTS (comic series)"
+        # The trailing-number-stripped guess should NOT exist as a
+        # separate row — we used the canonical from upstream.
+        assert guess is None
+
+
+def test_inferred_series_falls_back_to_guess_when_upstream_fails():
+    """If the issue article doesn't exist on Wookieepedia (or the
+    network call blows up) we should still create a Series row using
+    the trailing-number-stripped guess. Better than dropping the
+    link entirely — the user can fix the source_id later."""
+    from unittest.mock import patch
+    from app.routers.add import _attach_inferred_series
+
+    async def fake_get_article(title):
+        return None  # simulate "not found"
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
+        cid = _save(client, title="Fallback Probe",
+                    isbn_13="9789000030401",
+                    series="Fb Primary")
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = "FB Mystery Series FBMS 1\nFB Mystery Series FBMS 2\n"
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                return (await session.exec(
+                    select(Series).where(Series.name == "FB Mystery Series FBMS")
+                )).first()
+        ser = asyncio.run(_check())
+        assert ser is not None
+        # No source/source_id since upstream resolution failed.
+        assert ser.source is None
+
+
 def test_inferred_series_inherits_primary_publisher():
     """Newly-created Series rows from inference should pick up the
     publisher of the comic's primary series, so the library publisher
