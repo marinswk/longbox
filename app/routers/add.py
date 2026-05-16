@@ -222,15 +222,25 @@ async def _attach_inferred_series(comic_id: int) -> None:
     from app.services.collected_issues import derive_inferred_series
     from app.services import wookieepedia
 
+    # PHASE 1 — read-only DB session: load comic state + snapshot
+    # existing links + figure out which publisher to inherit. The
+    # session is CLOSED before any HTTP call so the cache writes
+    # those calls trigger can't deadlock against this transaction
+    # (SQLite is single-writer; holding a session open while
+    # downstream code opens a second session for the cache layer is
+    # the easiest way to provoke a "database is locked" error, which
+    # in turn made the inferrer silently fall back to guess names).
     async with SessionLocal() as session:
         comic = await session.get(Comic, comic_id)
         if comic is None:
             return
-        groups = derive_inferred_series(comic.collected_issues)
-        if not groups:
-            return
-
-        # Snapshot existing links so we don't double-write.
+        raw_collected = comic.collected_issues
+        primary_series_id = comic.series_id
+        publisher_id = None
+        if primary_series_id is not None:
+            primary = await session.get(Series, primary_series_id)
+            if primary is not None:
+                publisher_id = primary.publisher_id
         existing_link_ids = {
             r if isinstance(r, int) else r[0]
             for r in (await session.exec(
@@ -238,35 +248,49 @@ async def _attach_inferred_series(comic_id: int) -> None:
                 .where(ComicSeries.comic_id == comic_id)
             )).all()
         }
-        primary_series_id = comic.series_id
 
-        publisher_id = None
-        if primary_series_id is not None:
-            primary = await session.get(Series, primary_series_id)
-            if primary is not None:
-                publisher_id = primary.publisher_id
+    groups = derive_inferred_series(raw_collected)
+    if not groups:
+        return
 
-        for group in groups:
-            # Try to resolve the canonical Wookieepedia series article
-            # by sampling one issue. Cached via MetadataCache so the
-            # second omnibus that collects the same series pays no
-            # network cost.
-            canonical_name = group.name_guess
-            canonical_article: Optional[str] = None
+    # PHASE 2 — outside any DB session: resolve each group's
+    # canonical name via Wookieepedia. This is where the HTTP calls
+    # + their cache writes happen. Each call opens + closes its own
+    # session internally; with our outer session closed there's no
+    # write-lock contention.
+    resolved: list[tuple] = []
+    for group in groups:
+        cand = None
+        last_err: Optional[Exception] = None
+        for _attempt in range(2):
             try:
                 cand = await wookieepedia.get_article(group.sample_issue_title)
-            except Exception:
+                if cand is not None and cand.series:
+                    break
+            except Exception as e:
+                last_err = e
                 cand = None
-            if cand is not None and cand.series:
-                canonical_name = cand.series
-                # The issue infobox's series= field IS the article
-                # title (modulo the hierarchical-bullet shaving we do
-                # in `_pick_specific_series`). Use it as source_id so
-                # auto-link can fetch the issue list directly.
-                canonical_article = (
-                    cand.series_article_id or cand.series
-                )
+        if cand is not None and cand.series:
+            resolved.append((group, cand.series,
+                             cand.series_article_id or cand.series))
+        else:
+            # Canonical resolution failed even after retry. Skip
+            # writing a guess-named row — leaves a clean state for
+            # the next backfill / refresh to re-derive.
+            import logging as _lg
+            _lg.getLogger("longbox.infer").warning(
+                "canonical resolution failed for sample=%r err=%r — skipping",
+                group.sample_issue_title, last_err,
+            )
 
+    if not resolved:
+        return
+
+    # PHASE 3 — fresh DB session for the writes. Now the cache reads
+    # / writes from Phase 2 are done; we can hold this session as
+    # long as we like.
+    async with SessionLocal() as session:
+        for group, canonical_name, canonical_article in resolved:
             # Look up by canonical name first. If absent AND the
             # canonical differs from the guess, also check the guess —
             # an earlier name-only inference may have created a row

@@ -296,21 +296,35 @@ def test_save_auto_attaches_inferred_series_for_omnibus_like_comic():
     series, the inference background task should attach the comic to
     each of them — without the user doing anything.
 
-    We exercise this by writing a non-empty `collected_issues` value
-    after save and then running the inferrer directly (the background
-    task already does this; calling it here makes the assertion
-    deterministic without sleeping on the BackgroundTasks scheduler).
-    """
+    Mocks Wookieepedia's get_article to return canonical names; the
+    inferrer skips groups whose canonical resolution fails, so the
+    mock has to cover every sample issue title that appears in
+    `collected_issues`."""
+    from unittest.mock import patch
     from app.routers.add import _attach_inferred_series
     from app.models import ComicSeries
+    from app.services.schemas import LookupCandidate
 
-    with _client() as client:
+    async def fake_get_article(title):
+        if title.startswith("Knights of the Old Republic INF"):
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Knights of the Old Republic INF",
+            )
+        if title.startswith("Knights of the Old Republic: War INF"):
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Knights of the Old Republic: War INF",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
         cid = _save(client, title="Inf Omnibus",
                     isbn_13="9789000030001",
                     series="Inf Primary Series",
                     publisher="Inf Pub")
 
-        # Fake an omnibus-shaped collected_issues blob.
         async def _seed():
             async with SessionLocal() as session:
                 c = await session.get(Comic, cid)
@@ -333,7 +347,6 @@ def test_save_auto_attaches_inferred_series_for_omnibus_like_comic():
                     .where(ComicSeries.comic_id == cid)
                 )).all()
                 return {r if isinstance(r, str) else r[0] for r in rows}
-        # Primary still there + the two inferred ones.
         assert "Inf Primary Series" in asyncio.run(_linked_names())
         names = asyncio.run(_linked_names())
         assert "Knights of the Old Republic INF" in names
@@ -343,11 +356,22 @@ def test_save_auto_attaches_inferred_series_for_omnibus_like_comic():
 def test_inference_is_idempotent():
     """Running the inferrer twice on the same comic shouldn't create
     duplicate link rows."""
+    from unittest.mock import patch
     from app.routers.add import _attach_inferred_series
     from app.models import ComicSeries
+    from app.services.schemas import LookupCandidate
     from sqlalchemy import func as _func
 
-    with _client() as client:
+    async def fake_get_article(title):
+        if title.startswith("Idem Inferred Series"):
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Idem Inferred Series",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
         cid = _save(client, title="Idem Inf",
                     isbn_13="9789000030101",
                     series="Idem Inf Primary")
@@ -447,11 +471,15 @@ def test_inferred_series_resolves_to_canonical_article_title():
         assert guess is None
 
 
-def test_inferred_series_falls_back_to_guess_when_upstream_fails():
-    """If the issue article doesn't exist on Wookieepedia (or the
-    network call blows up) we should still create a Series row using
-    the trailing-number-stripped guess. Better than dropping the
-    link entirely — the user can fix the source_id later."""
+def test_inferred_series_skips_when_canonical_resolution_fails():
+    """When the issue article can't be resolved on Wookieepedia (404
+    or network error), the inferrer must SKIP rather than create a
+    guess-named Series row. Earlier behaviour was to write the guess
+    name, but that produces orphan rows that are awkward to merge
+    later — and worse, it can happen mid-batch when one HTTP call
+    blips, leaving the comic in a half-correct state. The cold-
+    start backfill / explicit refresh will re-try later when the
+    network is happy."""
     from unittest.mock import patch
     from app.routers.add import _attach_inferred_series
 
@@ -460,7 +488,7 @@ def test_inferred_series_falls_back_to_guess_when_upstream_fails():
 
     with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
          _client() as client:
-        cid = _save(client, title="Fallback Probe",
+        cid = _save(client, title="Skip Probe",
                     isbn_13="9789000030401",
                     series="Fb Primary")
         async def _seed():
@@ -475,22 +503,33 @@ def test_inferred_series_falls_back_to_guess_when_upstream_fails():
 
         async def _check():
             async with SessionLocal() as session:
-                return (await session.exec(
+                guess = (await session.exec(
                     select(Series).where(Series.name == "FB Mystery Series FBMS")
                 )).first()
-        ser = asyncio.run(_check())
-        assert ser is not None
-        # No source/source_id since upstream resolution failed.
-        assert ser.source is None
+                return guess
+        # No row created. The cold-start backfill or a manual refresh
+        # will retry resolution later.
+        assert asyncio.run(_check()) is None
 
 
 def test_inferred_series_inherits_primary_publisher():
     """Newly-created Series rows from inference should pick up the
     publisher of the comic's primary series, so the library publisher
     facet doesn't sprout a stray '(unset)' chip per inferred series."""
+    from unittest.mock import patch
     from app.routers.add import _attach_inferred_series
+    from app.services.schemas import LookupCandidate
 
-    with _client() as client:
+    async def fake_get_article(title):
+        if title.startswith("Pub Inferred Series"):
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Pub Inferred Series",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
         cid = _save(client, title="Pub Inh",
                     isbn_13="9789000030201",
                     series="Pub Inh Primary",
