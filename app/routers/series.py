@@ -664,11 +664,38 @@ async def _bulk_series_covers(
 ) -> dict[int, list[str]]:
     """Up to N owned-comic covers per series, ordered by cover date / id.
     Drives the collage on each series card when `Series.cover_url` isn't
-    set on the row itself."""
+    set on the row itself.
+
+    Pulls comics via BOTH the primary `series_id` FK AND the
+    ComicSeries multi-series link table. Inferred series — where the
+    only comic that "belongs" is an omnibus linked via the link table
+    — would otherwise render with an empty "No covers yet" placeholder
+    even though the user owns a comic that should display there.
+    """
     if not series_ids:
         return {}
-    rows = (await session.exec(
-        select(Comic.series_id, Comic.cover_url_local, Comic.cover_url_remote, Comic.cover_date, Comic.id)
+    from app.models import ComicSeries
+    out: dict[int, list[str]] = defaultdict(list)
+    seen: dict[int, set[int]] = defaultdict(set)  # series_id → {comic_id}
+
+    def _absorb(rows):
+        for sid, cid, local, remote in rows:
+            url = local or remote
+            if not url:
+                continue
+            if cid in seen[sid]:
+                continue
+            if len(out[sid]) >= per_series:
+                continue
+            seen[sid].add(cid)
+            out[sid].append(url)
+
+    # Primary FK path.
+    primary = (await session.exec(
+        select(
+            Comic.series_id, Comic.id,
+            Comic.cover_url_local, Comic.cover_url_remote,
+        )
         .where(
             Comic.series_id.in_(series_ids),
             or_(Comic.cover_url_local.is_not(None), Comic.cover_url_remote.is_not(None)),
@@ -679,13 +706,27 @@ async def _bulk_series_covers(
             Comic.id.asc(),
         )
     )).all()
-    out: dict[int, list[str]] = defaultdict(list)
-    for sid, local, remote, _cd, _cid in rows:
-        url = local or remote
-        if not url:
-            continue
-        if len(out[sid]) < per_series:
-            out[sid].append(url)
+    _absorb(primary)
+
+    # Link-table path.
+    linked = (await session.exec(
+        select(
+            ComicSeries.series_id, Comic.id,
+            Comic.cover_url_local, Comic.cover_url_remote,
+        )
+        .join(Comic, Comic.id == ComicSeries.comic_id)
+        .where(
+            ComicSeries.series_id.in_(series_ids),
+            or_(Comic.cover_url_local.is_not(None), Comic.cover_url_remote.is_not(None)),
+        )
+        .order_by(
+            ComicSeries.series_id.asc(),
+            Comic.cover_date.asc().nullslast(),
+            Comic.id.asc(),
+        )
+    )).all()
+    _absorb(linked)
+
     return dict(out)
 
 

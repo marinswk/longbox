@@ -529,6 +529,57 @@ _NUMBERED_VOLUME_RX = re.compile(
 )
 
 
+def _extract_series_issue_titles(body: str, series_article_title: str) -> list[str]:
+    """For old-style series articles (Knight Errant, Jedi vs. Sith,
+    etc.) the ===Issues=== section is a prettytable where each row
+    looks like:
+        |style="..."|N||[[Series Name: Arc Name N|''Arc'' N]]||date
+    Neither the bullet-list parser nor the Comictable-template parser
+    matches. We extract every wikilink in `body` whose article title
+    starts with the series base name and ends with a digit — that
+    catches actual issue articles ("Knight Errant: Aflame 1") while
+    excluding arc-name headers ("Aflame"), TPB references ("Star
+    Wars: Knight Errant Volume 1: Aflame"), file refs, and dates.
+
+    The base name is derived from the article title by stripping
+    common Wookieepedia decorations ("Star Wars:" prefix, "(comic
+    series)" suffix). Match is case-insensitive on the base.
+    """
+    if not body or not series_article_title:
+        return []
+    base = re.sub(r"^Star\s+Wars\s*:\s*", "", series_article_title,
+                  flags=re.IGNORECASE).strip()
+    base = re.sub(r"\s*\([^)]+\)\s*$", "", base).strip()
+    if not base:
+        return []
+    pattern = re.compile(
+        r"\[\["
+        + re.escape(base)
+        + r"(?::[^\]\|\n]*?)?\s+\d+[A-Za-z]?"
+        + r"\]\]"                # close, no display-text pipe
+        + r"|\[\["                # OR
+        + re.escape(base)
+        + r"(?::[^\]\|\n]*?)?\s+\d+[A-Za-z]?\|",  # close-then-pipe
+        re.IGNORECASE,
+    )
+    # The regex above is awkward; use a simpler one with a single
+    # capture group:
+    pattern = re.compile(
+        r"\[\[(" + re.escape(base) + r"(?::[^\]\|\n]*?)?\s+\d+[A-Za-z]?)(?:\||\])",
+        re.IGNORECASE,
+    )
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in pattern.finditer(body):
+        title = m.group(1).strip()
+        low = title.casefold()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(title)
+    return out
+
+
 def _extract_numbered_volume_links(wikitext: str) -> list[str]:
     """Find wikitable rows of the shape `N. [[Article]]` and return
     each Article in first-seen order. De-duplicates so an article
@@ -1019,6 +1070,12 @@ async def get_series_issues(article_title: str) -> list[str]:
         if items:
             return items
         items = _extract_bullet_targets(body)
+        if items:
+            return items
+        # Old-style prettytable Issues section — Knight Errant,
+        # Jedi vs. Sith, and friends. Filter wikilinks whose article
+        # title starts with the series base name and ends in a digit.
+        items = _extract_series_issue_titles(body, article_title)
         if items:
             return items
 

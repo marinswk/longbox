@@ -355,6 +355,70 @@ def test_get_series_issues_scopes_marvel_omnibus_sections():
     assert canon == ["Star Wars: Kanan Omnibus"]
 
 
+# Knight Errant-style prettytable Issues section — neither bullets
+# nor Comictable templates. Each row is `|N||[[Article|...]]||date`
+# with arc-header rows interspersed (`colspan="3"|[[Star Wars: Arc]]`).
+# The base-name-prefix extractor must pick the issue articles and
+# skip everything else.
+
+KNIGHT_ERRANT_WIKITEXT = (
+    "{{Top|rwm|old}}\n"
+    "{{ComicSeries\n"
+    "|title=''Star Wars: Knight Errant''\n"
+    "|publisher=[[Dark Horse Comics]]\n"
+    "}}\n"
+    "==Media==\n"
+    "===Issues===\n"
+    "{|{{Prettytable}}\n"
+    "! Issue||Title||Publication date||Trade paperback\n"
+    "|-\n"
+    "|style=\"background-color:#40CC40;\"|0||[[Knight Errant 0|''Knight Errant'' 0]]||[[August 12]], [[2010]]\n"
+    "|-\n"
+    "|style=\"background:#FFF8DC;\" colspan=\"3\"|[[Star Wars: Knight Errant: Aflame|''Aflame'']]||rowspan=\"6\"|[[Star Wars: Knight Errant Volume 1: Aflame|''Volume 1: Aflame'']]\n"
+    "|-\n"
+    "|style=\"background-color:#FFBB60;\"|1||[[Knight Errant: Aflame 1|''Aflame'' 1]]||[[October 13]], [[2010]]\n"
+    "|-\n"
+    "|style=\"background-color:#FFBB60;\"|2||[[Knight Errant: Aflame 2|''Aflame'' 2]]||[[November 10]], [[2010]]\n"
+    "|-\n"
+    "|style=\"background:#FFF8DC;\" colspan=\"3\"|[[Star Wars: Knight Errant: Deluge|''Deluge'']]||rowspan=\"5\"|[[Star Wars: Knight Errant Volume 2: Deluge|''Volume 2: Deluge'']]\n"
+    "|-\n"
+    "|style=\"background-color:#FFBB60;\"|1||[[Knight Errant: Deluge 1|''Deluge'' 1]]||[[August 17]], [[2011]]\n"
+    "|}\n"
+    "==Sources==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_parses_old_style_prettytable_with_base_name_filter():
+    """Regression: Knight Errant-style series articles list issues
+    in a prettytable where every issue row is
+    `|N||[[Series Base: Arc N|...]]||date`. We extract every wikilink
+    whose article title starts with the series base name and ends
+    with a digit. Arc-header rows (no number) and TPB references
+    (`Volume 1: Aflame` — no trailing number) are filtered out."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Star Wars: Knight Errant (comic series)",
+                          "wikitext": {"*": KNIGHT_ERRANT_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues(
+        "Star Wars: Knight Errant (comic series)"
+    ))
+    assert issues == [
+        "Knight Errant 0",
+        "Knight Errant: Aflame 1",
+        "Knight Errant: Aflame 2",
+        "Knight Errant: Deluge 1",
+    ]
+
+
 EDITIONS_WIKITEXT = (
     "{{Top}}\n"
     "==Editions==\n"

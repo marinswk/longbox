@@ -35,8 +35,15 @@
               {% endfor %}
             </div>
           {% else %}
-            <div class="flex h-full items-center justify-center text-xs text-gray-500">
-              No covers yet
+            {# No owned covers — render a stylised initial-letter tile
+               so the card has visual weight instead of an empty grey
+               rectangle. Uses the same crawl-yellow + black-shadow
+               palette as the rest of the app, with the first letter
+               of the series name as the focal point. #}
+            <div class="flex h-full items-center justify-center bg-crawl-light">
+              <span class="font-display text-7xl tracking-wide text-crawl-dark drop-shadow-[2px_2px_0_rgba(0,0,0,1)]">
+                {{ (s.name or '?')[:1] | upper }}
+              </span>
             </div>
           {% endif %}
         </div>
