@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 # Match a leading "COLLECTING:" / "Collects:" / "Collecting" prose header.
 # Used to strip the prefix from the first entry so what follows can be
@@ -37,6 +38,13 @@ _NON_TITLE_CHARS = re.compile(r"[,;#]")
 class CollectedEntry:
     text: str
     linkable: bool
+    # Optional override: the Wookieepedia article title to LINK to /
+    # resolve via canonical-series inference, when the display text
+    # carries additional descriptive context. Example:
+    #   text       = "Untitled Pizzazz Star Wars Story — Pizzazz 1"
+    #   article_id = "Pizzazz 1"  ← the actual wiki article
+    # When None, callers use `text` itself as the article title.
+    article_id: Optional[str] = None
 
 
 def _looks_like_article_title(s: str) -> bool:
@@ -97,7 +105,11 @@ def derive_inferred_series(raw: str | None) -> list[InferredSeriesGroup]:
     for entry in parse_entries(raw):
         if not entry.linkable:
             continue
-        m = _SERIES_FROM_ISSUE.match(entry.text)
+        # Prefer the article_id when set (em-dash combined entries
+        # use it to point at the book reference, not the descriptive
+        # "Story — Book" display string).
+        article = entry.article_id or entry.text
+        m = _SERIES_FROM_ISSUE.match(article)
         if not m:
             continue
         name = m.group("series").strip()
@@ -108,7 +120,7 @@ def derive_inferred_series(raw: str | None) -> list[InferredSeriesGroup]:
             continue
         seen_norm.add(norm)
         out.append(InferredSeriesGroup(
-            name_guess=name, sample_issue_title=entry.text,
+            name_guess=name, sample_issue_title=article,
         ))
     return out
 
@@ -123,10 +135,14 @@ def derive_series_names(raw: str | None) -> list[str]:
 def parse_entries(raw: str | None) -> list[CollectedEntry]:
     """Split `raw` on newlines and classify each non-empty entry.
 
-    Special-cases the "COLLECTING:" prose pattern: the prefix is stripped
-    from the first entry, and if what remains still has a comma (i.e.
-    it's a "A 1-5, B 1" list, not a single title) the whole entry is
-    kept verbatim and marked `linkable=False`.
+    Special-cases:
+      * "COLLECTING:" prose prefix is stripped from the first entry,
+        and if what remains is a multi-item list ("A 1-5, B 1") the
+        whole entry is kept verbatim and marked `linkable=False`.
+      * `"<Story> — <Book>"` em-dash combined entries (emitted by the
+        StoryCite parser): the display text keeps both halves, but
+        `article_id` is set to just the book half so callers
+        resolving / linking go straight to the real wiki article.
     """
     if not raw:
         return []
@@ -135,6 +151,16 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
         text = line.strip()
         if not text:
             continue
+        # Em-dash split: "Story — Book". The book half is the
+        # Wookieepedia article title to link / resolve.
+        if " — " in text:
+            story_part, _, book_part = text.rpartition(" — ")
+            book_part = book_part.strip()
+            if book_part and _looks_like_article_title(book_part):
+                out.append(CollectedEntry(
+                    text=text, linkable=True, article_id=book_part,
+                ))
+                continue
         # Strip the "COLLECTING:" prefix on the very first entry so it
         # doesn't mask everything after it as non-linkable.
         head = _COLLECTING_PREFIX.sub("", text)

@@ -727,14 +727,17 @@ def _extract_bullet_targets(body: str) -> list[str]:
             continue
         story, book = _extract_storycite_parts(line)
         if story or book:
-            # Emit BOTH halves of a StoryCite. `book` first because
-            # it's the real wiki article title that series inference
-            # can dereference (e.g. "Pizzazz 1" → series "Pizzazz");
-            # `story` follows as the display-friendly short-story
-            # label. Skipping when they collide.
-            if book:
+            # Emit ONE line per StoryCite using a unicode em-dash
+            # separator: `"{story} — {book}"`. parse_entries
+            # downstream splits on the same em-dash to expose
+            # `article_id=book` to inference + match logic while
+            # the display text shows both halves. One issue per
+            # bullet means the user sees an accurate Contents list.
+            if story and book:
+                out.append(f"{story} — {book}")
+            elif book:
                 out.append(book)
-            if story and story != book:
+            elif story:
                 out.append(story)
             continue
         cleaned = _clean(line)

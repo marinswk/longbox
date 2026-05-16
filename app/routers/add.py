@@ -265,8 +265,13 @@ async def _attach_inferred_series(comic_id: int) -> None:
     # Pass EVERY linkable entry through — not just ones ending with a
     # number. One-shots like "Jabba the Hutt: The Gaar Suppoon Hit"
     # don't have a trailing number but their issue articles DO
-    # carry a `series=` infobox value we should follow.
-    linkable_titles = [e.text for e in entries if e.linkable]
+    # carry a `series=` infobox value we should follow. When an
+    # entry has `article_id` set (em-dash combined StoryCite entries
+    # like "Story — Pizzazz 1"), use that — the display text is just
+    # a label.
+    linkable_titles = [
+        (e.article_id or e.text) for e in entries if e.linkable
+    ]
     if not linkable_titles:
         return
 

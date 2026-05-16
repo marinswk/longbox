@@ -50,8 +50,24 @@ def _trailing_number(label: str) -> Optional[str]:
 
 
 def _collected_titles(comic: Comic) -> set[str]:
+    """Return the set of issue-article titles a comic's
+    `collected_issues` blob refers to. For combined "Story — Book"
+    entries, the BOOK part is used (that's the real article title);
+    the full line is also included so callers matching against the
+    raw entry text still find it."""
     raw = comic.collected_issues or ""
-    return {line.strip() for line in raw.split("\n") if line.strip()}
+    out: set[str] = set()
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        out.add(line)
+        # Em-dash combined entry → also index by the book half.
+        if " — " in line:
+            book_part = line.rsplit(" — ", 1)[-1].strip()
+            if book_part:
+                out.add(book_part)
+    return out
 
 
 def parse_expected(series: Series) -> list[str]:

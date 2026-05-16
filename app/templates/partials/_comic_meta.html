@@ -78,7 +78,10 @@ https://starwars.fandom.com/wiki/{{ title.replace(' ', '_')|urlencode }}
         {% for entry in collected_entries %}
           <li>
             {% if is_wookiee and entry.linkable %}
-              <a href="{{ wookiee_url(entry.text) }}" target="_blank" rel="noopener noreferrer"
+              {# article_id may be a sub-string of text (em-dash
+                 combined entries like "Story — Pizzazz 1" link to
+                 the book half), falls back to the full text. #}
+              <a href="{{ wookiee_url(entry.article_id or entry.text) }}" target="_blank" rel="noopener noreferrer"
                  class="text-crawl-dark hover:underline">{{ entry.text }}</a>
             {% else %}
               {{ entry.text }}
