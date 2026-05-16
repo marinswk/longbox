@@ -641,13 +641,20 @@ _LINK_ARTICLE = re.compile(r"\[\[([^\]\|]+)")
 _STORYCITE = re.compile(r"\{\{StoryCite\b([^}]*)\}\}")
 
 
-def _extract_storycite_label(line: str) -> Optional[str]:
-    """Pull a usable label out of a `{{StoryCite|story=…|book=…}}` template,
-    preferring the story title (the named `story=` arg). Falls back to the
-    `book=` arg, then the first positional arg."""
+def _extract_storycite_parts(line: str) -> tuple[Optional[str], Optional[str]]:
+    """Return `(story, book)` extracted from a
+    `{{StoryCite|story=…|book=…}}` template, or `(None, None)` if no
+    template is present on this line. The two halves carry different
+    information:
+      - `story` is the short-story title (display-friendly, often not
+        a wiki article in its own right).
+      - `book` is the parent issue article title (e.g. "Pizzazz 1",
+        "Star Wars Weekly 60") — that's where series inference picks
+        up the underlying magazine / comic series.
+    """
     m = _STORYCITE.search(line)
     if not m:
-        return None
+        return None, None
     args = [a.strip() for a in m.group(1).split("|") if a.strip()]
     named: dict[str, str] = {}
     positional: list[str] = []
@@ -657,7 +664,17 @@ def _extract_storycite_label(line: str) -> Optional[str]:
             named[k.strip().lower()] = v.strip()
         else:
             positional.append(a)
-    return named.get("story") or named.get("book") or (positional[0] if positional else None)
+    story = named.get("story") or (positional[0] if positional else None)
+    book = named.get("book") or (positional[1] if len(positional) > 1 else None)
+    return story, book
+
+
+def _extract_storycite_label(line: str) -> Optional[str]:
+    """Backward-compat wrapper: return whichever of story/book is set,
+    preferring story (same shape `parse_entries` and existing callers
+    expect)."""
+    story, book = _extract_storycite_parts(line)
+    return story or book
 
 
 def _extract_bullet_targets(body: str) -> list[str]:
@@ -708,9 +725,17 @@ def _extract_bullet_targets(body: str) -> list[str]:
         if link:
             out.append(link.group(1).strip())
             continue
-        story = _extract_storycite_label(line)
-        if story:
-            out.append(story)
+        story, book = _extract_storycite_parts(line)
+        if story or book:
+            # Emit BOTH halves of a StoryCite. `book` first because
+            # it's the real wiki article title that series inference
+            # can dereference (e.g. "Pizzazz 1" → series "Pizzazz");
+            # `story` follows as the display-friendly short-story
+            # label. Skipping when they collide.
+            if book:
+                out.append(book)
+            if story and story != book:
+                out.append(story)
             continue
         cleaned = _clean(line)
         if cleaned:
