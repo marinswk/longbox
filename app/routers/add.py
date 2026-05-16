@@ -249,52 +249,88 @@ async def _attach_inferred_series(comic_id: int) -> None:
             )).all()
         }
 
-    groups = derive_inferred_series(raw_collected)
-    if not groups:
+    # PHASE 2 — outside any DB session: resolve EVERY linkable
+    # collected-issues entry via Wookieepedia and group the results
+    # by their canonical series. Resolving only one sample per
+    # trailing-number-stripped guess (the old behaviour) silently
+    # mis-routed cases like "The Old Republic 1/2/3" + "The Old
+    # Republic 4/5/6" — both have guess "The Old Republic" but they
+    # belong to two completely different series articles. Grouping
+    # by canonical-after-resolution catches these split-name cases.
+    import asyncio as _asyncio
+    import logging as _lg
+    from app.services.collected_issues import parse_entries
+    entries = parse_entries(raw_collected)
+    linkable_titles = [e.text for e in entries if e.linkable
+                       and re.match(r"^.+?\s+\d+[A-Za-z]?$", e.text)]
+    if not linkable_titles:
         return
 
-    # PHASE 2 — outside any DB session: resolve each group's
-    # canonical name via Wookieepedia. This is where the HTTP calls
-    # + their cache writes happen. Each call opens + closes its own
-    # session internally; with our outer session closed there's no
-    # write-lock contention.
-    resolved: list[tuple] = []
-    for group in groups:
-        cand = None
-        last_err: Optional[Exception] = None
-        for _attempt in range(2):
+    # Bound concurrency so a 70-issue omnibus doesn't smack
+    # Wookieepedia with 70 parallel requests. The first save pays
+    # the network cost; subsequent saves hit MetadataCache.
+    sem = _asyncio.Semaphore(8)
+    async def _resolve(t):
+        async with sem:
+            for _attempt in range(2):
+                try:
+                    cand = await wookieepedia.get_article(t)
+                    if cand is not None and cand.series:
+                        return t, cand
+                except Exception as e:
+                    _lg.getLogger("longbox.infer").warning(
+                        "resolution failed for %r: %r", t, e,
+                    )
+            return t, None
+    resolved_pairs = await _asyncio.gather(
+        *( _resolve(t) for t in linkable_titles )
+    )
+
+    # Group by canonical name. Keep one representative title per
+    # group so we can derive a name_guess (used by the rename/merge
+    # branches in Phase 3).
+    by_canon: dict[str, dict] = {}
+    for title, cand in resolved_pairs:
+        if cand is None or not cand.series:
+            continue
+        key = cand.series
+        if key in by_canon:
+            continue
+        guess_match = re.match(r"^(.+?)\s+\d+[A-Za-z]?$", title)
+        guess = guess_match.group(1).strip() if guess_match else title
+        by_canon[key] = {
+            "name_guess": guess,
+            "sample_issue_title": title,
+            "article_id": cand.series_article_id or cand.series,
+        }
+    if not by_canon:
+        return
+
+    # Pre-fetch expected_issues per canonical (cached after first
+    # hit, same Semaphore-bounded parallelism).
+    async def _series_issues(article_id):
+        async with sem:
             try:
-                cand = await wookieepedia.get_article(group.sample_issue_title)
-                if cand is not None and cand.series:
-                    break
-            except Exception as e:
-                last_err = e
-                cand = None
-        if cand is not None and cand.series:
-            canonical_name = cand.series
-            canonical_article = cand.series_article_id or cand.series
-            # Also pre-fetch the canonical series' issue list so the
-            # /series/{id} page works out-of-the-box without the user
-            # having to click "Pull issues automatically" once per
-            # inferred series. Cached via MetadataCache so the second
-            # omnibus that collects the same series pays no cost.
-            try:
-                issues = await wookieepedia.get_series_issues(canonical_article)
+                return article_id, await wookieepedia.get_series_issues(article_id)
             except Exception:
-                issues = []
-            resolved.append((group, canonical_name, canonical_article, issues))
-        else:
-            # Canonical resolution failed even after retry. Skip
-            # writing a guess-named row — leaves a clean state for
-            # the next backfill / refresh to re-derive.
-            import logging as _lg
-            _lg.getLogger("longbox.infer").warning(
-                "canonical resolution failed for sample=%r err=%r — skipping",
-                group.sample_issue_title, last_err,
-            )
+                return article_id, []
+    issue_results = await _asyncio.gather(
+        *( _series_issues(info["article_id"]) for info in by_canon.values() )
+    )
+    issues_by_article: dict[str, list[str]] = dict(issue_results)
 
-    if not resolved:
-        return
+    resolved: list[tuple] = []
+    for canonical_name, info in by_canon.items():
+        # Build a minimal pseudo-group object for the Phase-3 logic.
+        class _G:
+            name_guess = info["name_guess"]
+            sample_issue_title = info["sample_issue_title"]
+        resolved.append((
+            _G,
+            canonical_name,
+            info["article_id"],
+            issues_by_article.get(info["article_id"], []),
+        ))
 
     # PHASE 3 — fresh DB session for the writes. Now the cache reads
     # / writes from Phase 2 are done; we can hold this session as
