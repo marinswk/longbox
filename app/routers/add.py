@@ -267,9 +267,71 @@ async def _attach_inferred_series(comic_id: int) -> None:
                     cand.series_article_id or cand.series
                 )
 
+            # Look up by canonical name first. If absent AND the
+            # canonical differs from the guess, also check the guess —
+            # an earlier name-only inference may have created a row
+            # under that name; we rename it to the canonical instead
+            # of creating a duplicate. If BOTH rows exist (rare —
+            # means the inferrer was run with different code at
+            # different times), merge by reassigning the guess's
+            # links onto the canonical and deleting the guess row.
             existing = (await session.exec(
                 select(Series).where(Series.name == canonical_name)
             )).first()
+            guess_row = None
+            if canonical_name != group.name_guess:
+                guess_row = (await session.exec(
+                    select(Series).where(Series.name == group.name_guess)
+                )).first()
+
+            if existing is None and guess_row is not None:
+                # Rename the guess row in place. Carries over all the
+                # existing ComicSeries / Comic.series_id references
+                # without touching them.
+                guess_row.name = canonical_name
+                if canonical_article and not guess_row.source_id:
+                    guess_row.source = "wookieepedia"
+                    guess_row.source_id = canonical_article
+                session.add(guess_row)
+                await session.flush()
+                existing = guess_row
+            elif existing is not None and guess_row is not None and guess_row.id != existing.id:
+                # Both rows exist — collapse the guess into the canonical.
+                # Done via raw SQL because SQLAlchemy ORM doesn't allow
+                # updating an instance's primary key columns cleanly
+                # (the (comic_id, series_id) composite would change),
+                # and we may already have rows at the destination PK.
+                from sqlalchemy import update as sa_update, delete as sa_delete, text
+                from app.models import ComicSeries as _CS
+                # Snapshot ids before we drop the ORM-managed instance.
+                # Accessing `.id` after a `session.delete()` triggers a
+                # lazy-load outside the greenlet context and explodes.
+                gid = guess_row.id
+                eid = existing.id
+                # 1. Reassign every Comic.series_id pointer.
+                await session.exec(
+                    sa_update(Comic)
+                    .where(Comic.series_id == gid)
+                    .values(series_id=eid)
+                )
+                # 2. Copy guess link rows into canonical rows. INSERT
+                #    OR IGNORE handles the case where a comic is
+                #    already linked to both (would-be PK collision).
+                await session.exec(text(
+                    "INSERT OR IGNORE INTO comicseries "
+                    "  (comic_id, series_id, is_primary, created_at) "
+                    "SELECT comic_id, :canonical, is_primary, created_at "
+                    "FROM comicseries WHERE series_id = :guess"
+                ).bindparams(canonical=eid, guess=gid))
+                # 3. Drop all guess-pointed link rows + the guess row.
+                await session.exec(
+                    sa_delete(_CS).where(_CS.series_id == gid)
+                )
+                await session.exec(
+                    sa_delete(Series).where(Series.id == gid)
+                )
+                await session.commit()
+
             if existing is None:
                 existing = Series(
                     name=canonical_name,
@@ -290,6 +352,20 @@ async def _attach_inferred_series(comic_id: int) -> None:
             if existing.id == primary_series_id:
                 continue
             if existing.id in existing_link_ids:
+                continue
+            # Final defensive check — the merge branch above may have
+            # just inserted this link by copying it from the guess
+            # row, and our cached `existing_link_ids` set wouldn't
+            # know. Re-checking the DB avoids tripping the UNIQUE
+            # constraint on (comic_id, series_id).
+            already = (await session.exec(
+                select(ComicSeries).where(
+                    ComicSeries.comic_id == comic_id,
+                    ComicSeries.series_id == existing.id,
+                )
+            )).first()
+            if already is not None:
+                existing_link_ids.add(existing.id)
                 continue
             session.add(ComicSeries(
                 comic_id=comic_id,

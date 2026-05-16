@@ -88,6 +88,7 @@ _LEADING_BULLET = re.compile(r"^\s*\*+\s*", re.MULTILINE)
 
 def _clean(value: str) -> str:
     """Strip wiki markup down to a plain-text rendering."""
+    import html as _html
     s = value
     s = _HTML_COMMENT.sub("", s)
     s = _REF_BLOCK.sub("", s)
@@ -104,6 +105,10 @@ def _clean(value: str) -> str:
     # collapse runs of whitespace within a single line, but keep newlines so
     # multi-value fields (e.g. "*A\n*B") render readably.
     s = re.sub(r"[ \t]+", " ", s)
+    # Decode HTML entities Wookieepedia sprinkles in (&ndash;, &mdash;,
+    # &amp;, &nbsp;, etc.) so display values render as their actual
+    # characters instead of literal entity strings like "3964&ndash;3962".
+    s = _html.unescape(s)
     return s.strip()
 
 

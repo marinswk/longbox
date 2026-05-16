@@ -524,6 +524,200 @@ def test_inferred_series_inherits_primary_publisher():
         assert pub.name == "Pub Inh Marvel"
 
 
+def test_inference_renames_guess_row_to_canonical_when_canonical_doesnt_exist():
+    """Regression: on /comic/1 the user saw two series rows
+    side-by-side, "Knights of the Old Republic: War" (the old
+    guess-only inference) AND "Star Wars: Knights of the Old
+    Republic: War" (the new canonical). The inferrer must collapse
+    the dupes by renaming the guess row into the canonical."""
+    from unittest.mock import patch
+    from app.routers.add import _attach_inferred_series
+    from app.services.schemas import LookupCandidate
+
+    async def fake_get_article(title):
+        if title == "Guess Vs Canonical GVC 1":
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Star Wars: Guess Vs Canonical GVC (comic series)",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
+        cid = _save(client, title="GvC Probe",
+                    isbn_13="9789000030501", series="GvC Primary")
+
+        async def _seed_legacy():
+            async with SessionLocal() as session:
+                # Simulate the legacy state: a Series row exists with
+                # the guess name (created before canonical resolution
+                # landed), and the comic is already linked to it.
+                from app.models import ComicSeries
+                legacy = Series(name="Guess Vs Canonical GVC")
+                session.add(legacy)
+                await session.flush()
+                session.add(ComicSeries(
+                    comic_id=cid, series_id=legacy.id, is_primary=False,
+                ))
+                # Stamp collected_issues so the inferrer runs.
+                c = await session.get(Comic, cid)
+                c.collected_issues = (
+                    "Guess Vs Canonical GVC 1\n"
+                    "Guess Vs Canonical GVC 2\n"
+                )
+                session.add(c)
+                await session.commit()
+                return legacy.id
+        legacy_id = asyncio.run(_seed_legacy())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                renamed = await session.get(Series, legacy_id)
+                guess_still = (await session.exec(
+                    select(Series).where(Series.name == "Guess Vs Canonical GVC")
+                )).first()
+                canon = (await session.exec(
+                    select(Series).where(
+                        Series.name == "Star Wars: Guess Vs Canonical GVC (comic series)"
+                    )
+                )).first()
+                return renamed, guess_still, canon
+        renamed, guess_still, canon = asyncio.run(_check())
+        # Same row, new name — id preserved so existing links still work.
+        assert renamed.id == legacy_id
+        assert renamed.name == "Star Wars: Guess Vs Canonical GVC (comic series)"
+        assert renamed.source == "wookieepedia"
+        # Guess name no longer exists; canonical points at our row.
+        assert guess_still is None
+        assert canon is not None
+        assert canon.id == legacy_id
+
+
+def test_inference_merges_when_both_guess_and_canonical_rows_exist():
+    """The harder case: BOTH a guess-named row AND a canonical-named
+    row already exist (the user toggled inference paths over time).
+    The inferrer should collapse the guess into the canonical,
+    reassigning every link and the primary FK."""
+    from unittest.mock import patch
+    from app.routers.add import _attach_inferred_series
+    from app.services.schemas import LookupCandidate
+    from app.models import ComicSeries
+
+    async def fake_get_article(title):
+        if title == "Merge Test MT 1":
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Star Wars: Merge Test MT (comic series)",
+            )
+        return None
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         _client() as client:
+        cid = _save(client, title="Merge Probe",
+                    isbn_13="9789000030601", series="Merge Primary")
+
+        async def _seed():
+            async with SessionLocal() as session:
+                guess = Series(name="Merge Test MT")
+                canon = Series(name="Star Wars: Merge Test MT (comic series)")
+                session.add(guess)
+                session.add(canon)
+                await session.flush()
+                # Link the comic to the guess row only.
+                session.add(ComicSeries(
+                    comic_id=cid, series_id=guess.id, is_primary=False,
+                ))
+                c = await session.get(Comic, cid)
+                c.collected_issues = "Merge Test MT 1\n"
+                session.add(c)
+                await session.commit()
+                return guess.id, canon.id
+        guess_id, canon_id = asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                # Guess row is gone.
+                gone = await session.get(Series, guess_id)
+                # Canonical row still exists.
+                canon = await session.get(Series, canon_id)
+                # Link reassigned to canonical, no link to the (gone) guess.
+                links = (await session.exec(
+                    select(ComicSeries).where(ComicSeries.comic_id == cid)
+                )).all()
+                target_series_ids = {l.series_id for l in links}
+                return gone, canon, target_series_ids
+        gone, canon, target_series_ids = asyncio.run(_check())
+        assert gone is None
+        assert canon is not None
+        assert canon_id in target_series_ids
+        assert guess_id not in target_series_ids
+
+
+def test_backfill_normalises_primary_flag_to_a_single_row_per_comic():
+    """Regression for "comic has multiple PRIMARY badges": when the
+    series-rename / merge flow reassigns Comic.series_id over time,
+    older ComicSeries rows can keep is_primary=True. The backfill
+    must demote any link whose series_id no longer matches the
+    current Comic.series_id."""
+    from app.models import ComicSeries
+    from app.services.fandoms import backfill_comic_series_links
+
+    with _client() as client:
+        cid = _save(client, title="Primary Drift",
+                    isbn_13="9789000030701", series="Drift Series")
+        comic = _comic(cid)
+        original_primary = comic.series_id
+
+        async def _seed_drift():
+            async with SessionLocal() as session:
+                # Create a second series and write a STALE primary link
+                # for the same comic — simulating what happens when
+                # /series/{id}/auto-link reassigns Comic.series_id after
+                # the original primary link was already created.
+                from app.models import ComicSeries as CS
+                other = Series(name="Drift Other Series")
+                session.add(other)
+                await session.flush()
+                session.add(CS(
+                    comic_id=cid, series_id=other.id, is_primary=True,
+                ))
+                await session.commit()
+                return other.id
+        other_id = asyncio.run(_seed_drift())
+
+        # Backfill should normalise: only the link matching
+        # Comic.series_id stays primary.
+        asyncio.run(backfill_comic_series_links())
+
+        async def _check():
+            async with SessionLocal() as session:
+                rows = (await session.exec(
+                    select(ComicSeries).where(ComicSeries.comic_id == cid)
+                )).all()
+                return rows
+        rows = asyncio.run(_check())
+        primaries = [r for r in rows if r.is_primary]
+        assert len(primaries) == 1
+        assert primaries[0].series_id == original_primary
+        # The "drifted" stale row is demoted (still present but not primary).
+        other_row = [r for r in rows if r.series_id == other_id][0]
+        assert other_row.is_primary is False
+
+
+def test_clean_decodes_html_entities():
+    """Regression: timeline fields like "3964&ndash;3962 BBY" rendered
+    with the literal entity instead of the en-dash character.
+    `_clean` now html.unescape()s the result."""
+    from app.services.wookieepedia import _clean
+    assert _clean("3964&ndash;3962 BBY") == "3964–3962 BBY"
+    assert _clean("Foo &amp; Bar") == "Foo & Bar"
+    assert _clean("non&mdash;breaking") == "non—breaking"
+
+
 def test_comic_series_search_excludes_already_linked_series():
     """The typeahead shouldn't suggest a series the comic is already
     in — primary FK or link table."""

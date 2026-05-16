@@ -254,18 +254,26 @@ async def backfill_inferred_series_from_collected_issues() -> int:
 
 async def backfill_comic_series_links() -> int:
     """Mirror every Comic.series_id value into the ComicSeries link
-    table so multi-series-aware views see the primary series too.
-    Idempotent — uses INSERT OR IGNORE on the (comic_id, series_id)
-    composite primary key. Returns rows added.
+    table AND ensure exactly one row per comic is flagged `is_primary`
+    (the one whose `series_id` matches the current `Comic.series_id`).
+    Idempotent — safe on every cold start.
 
-    Necessary because:
-      1. Comics saved BEFORE migration 0009 may still lack a
-         ComicSeries row if the migration's one-shot backfill couldn't
-         reach them (e.g. in long-lived dev DBs that skipped the
-         migration's INSERT pass).
-      2. Save paths added before the multi-series schema landed
-         (CSV import, /add/save, etc.) write `Comic.series_id` only;
-         this catches them up on the next cold start.
+    Two-step:
+      1. INSERT OR IGNORE the primary link for every Comic.series_id.
+      2. Normalise the `is_primary` flag across all rows so that
+         exactly the link matching `Comic.series_id` is True and every
+         other row (including stale primaries left over when
+         Comic.series_id was reassigned by /series/{id}/auto-link's
+         backfill-rename or by the merge UI) becomes False.
+
+    Step 2 is the fix for the "comic shows multiple PRIMARY badges"
+    bug: previously when an auto-link rename moved Comic.series_id
+    from S1 to S2, the backfill happily added (comic, S2,
+    is_primary=True) but left (comic, S1, is_primary=True) in place,
+    so the comic detail page rendered both as primary.
+
+    Returns rows added by step 1. Step 2's UPDATE rowcount is noisy
+    (touches every link) and not surfaced.
     """
     from sqlalchemy import text
     async with SessionLocal() as session:
@@ -274,6 +282,17 @@ async def backfill_comic_series_links() -> int:
             "  (comic_id, series_id, is_primary, created_at) "
             "SELECT id, series_id, 1, CURRENT_TIMESTAMP "
             "FROM comic WHERE series_id IS NOT NULL"
+        ))
+        # Normalise: a row is primary iff it matches Comic.series_id.
+        # The CASE wrapper avoids producing NULL when Comic.series_id
+        # is NULL — bare `series_id = NULL` evaluates to NULL in SQL
+        # three-valued logic, which then violates the NOT NULL
+        # constraint on comicseries.is_primary.
+        await session.exec(text(
+            "UPDATE comicseries SET is_primary = CASE "
+            "WHEN series_id = ("
+            "  SELECT series_id FROM comic WHERE comic.id = comicseries.comic_id"
+            ") THEN 1 ELSE 0 END"
         ))
         await session.commit()
         return int(result.rowcount or 0)
