@@ -423,6 +423,12 @@ def test_series_enrichment_skips_when_already_enriched():
                     await session.commit()
             asyncio.run(_seed())
 
+            # The background inference task fired by /add/save also
+            # hits our mocked fetcher (with one call per inferred
+            # canonical). Snapshot the count post-save so we can
+            # assert that the EXPLICIT _enrich_series_from_candidate
+            # call below adds zero further calls.
+            baseline = called["n"]
             asyncio.run(_enrich_series_from_candidate(
                 sid, "wookieepedia", "EnrIdem-1201", None,
             ))
@@ -434,7 +440,8 @@ def test_series_enrichment_skips_when_already_enriched():
             # Untouched.
             assert series.source_id == "Manual"
             assert series.expected_issues == "Existing #1"
-            assert called["n"] == 0
+            # No NEW calls from _enrich_series_from_candidate.
+            assert called["n"] == baseline
 
 
 def test_series_enrichment_no_op_when_fetcher_returns_empty():

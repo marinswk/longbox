@@ -260,9 +260,13 @@ async def _attach_inferred_series(comic_id: int) -> None:
     import asyncio as _asyncio
     import logging as _lg
     from app.services.collected_issues import parse_entries
+    from app.services.schemas import LookupCandidate
     entries = parse_entries(raw_collected)
-    linkable_titles = [e.text for e in entries if e.linkable
-                       and re.match(r"^.+?\s+\d+[A-Za-z]?$", e.text)]
+    # Pass EVERY linkable entry through — not just ones ending with a
+    # number. One-shots like "Jabba the Hutt: The Gaar Suppoon Hit"
+    # don't have a trailing number but their issue articles DO
+    # carry a `series=` infobox value we should follow.
+    linkable_titles = [e.text for e in entries if e.linkable]
     if not linkable_titles:
         return
 
@@ -270,8 +274,12 @@ async def _attach_inferred_series(comic_id: int) -> None:
     # Wookieepedia with 70 parallel requests. The first save pays
     # the network cost; subsequent saves hit MetadataCache.
     sem = _asyncio.Semaphore(8)
+
     async def _resolve(t):
         async with sem:
+            # Step 1: direct resolution — the issue article's
+            # series= infobox usually points at the canonical
+            # series.
             for _attempt in range(2):
                 try:
                     cand = await wookieepedia.get_article(t)
@@ -281,7 +289,37 @@ async def _attach_inferred_series(comic_id: int) -> None:
                     _lg.getLogger("longbox.infer").warning(
                         "resolution failed for %r: %r", t, e,
                     )
+                    cand = None
+            # Step 2: fallback — when the infobox series= is empty
+            # (some Dark Horse miniseries articles leave it blank,
+            # e.g. "Darth Vader and the Ninth Assassin 1"), derive
+            # the series from the issue title by stripping the
+            # trailing issue number and trying both bare + the
+            # canonical "Star Wars: " prefixed form. We use
+            # `get_series_issues` as the existence probe rather than
+            # `get_article` because series-page articles use the
+            # `ComicSeries` infobox template, which `get_article`
+            # doesn't recognise (it gates on ComicBook /
+            # ComicCollection). If the variant article exists AND
+            # has a parseable Issues section, treat it as the
+            # canonical series.
+            m = re.match(r"^(.+?)\s+\d+[A-Za-z]?$", t)
+            if m:
+                guess_base = m.group(1).strip()
+                for variant in (f"Star Wars: {guess_base}", guess_base):
+                    try:
+                        probe_issues = await wookieepedia.get_series_issues(variant)
+                    except Exception:
+                        probe_issues = []
+                    if probe_issues:
+                        return t, LookupCandidate(
+                            source="wookieepedia",
+                            source_id=t,
+                            title=t,
+                            series=variant,
+                        )
             return t, None
+
     resolved_pairs = await _asyncio.gather(
         *( _resolve(t) for t in linkable_titles )
     )
@@ -318,6 +356,33 @@ async def _attach_inferred_series(comic_id: int) -> None:
         *( _series_issues(info["article_id"]) for info in by_canon.values() )
     )
     issues_by_article: dict[str, list[str]] = dict(issue_results)
+
+    # Drop "subsumed" canonicals: when sub-series A's issue list is a
+    # strict subset of umbrella B's, the user already gets full
+    # coverage tracking through B and the standalone A row is just
+    # noise (e.g. "Dark Times—Out of the Wilderness 1-5" is included
+    # in the broader "Dark Times" series' 33-issue list). Skipping A
+    # cleans up the cluttered SERIES section on the comic detail
+    # page without losing any tracking info.
+    canon_list = list(by_canon.keys())
+    issue_sets = {
+        canon: set(issues_by_article.get(by_canon[canon]["article_id"], []))
+        for canon in canon_list
+    }
+    subsumed: set[str] = set()
+    for a in canon_list:
+        a_set = issue_sets[a]
+        if not a_set:
+            continue
+        for b in canon_list:
+            if a == b:
+                continue
+            b_set = issue_sets[b]
+            if a_set < b_set:  # strict subset
+                subsumed.add(a)
+                break
+    for canon in subsumed:
+        by_canon.pop(canon, None)
 
     resolved: list[tuple] = []
     for canonical_name, info in by_canon.items():

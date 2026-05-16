@@ -531,14 +531,17 @@ def test_get_series_issues_recognises_editions_header_variant():
         qs = parse_qs(urlparse(str(request.url)).query)
         if qs.get("action", [None])[0] == "parse":
             return httpx.Response(200, json={
-                "parse": {"title": "Foo", "wikitext": {"*": EDITIONS_WIKITEXT}},
+                "parse": {"title": "Editions Probe Article",
+                          "wikitext": {"*": EDITIONS_WIKITEXT}},
             })
         return httpx.Response(404)
 
     respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
     with _client():
         pass
-    issues = asyncio.run(wookieepedia.get_series_issues("Foo"))
+    # Use a unique article title to dodge MetadataCache pollution
+    # from earlier tests that cached "Foo" with different content.
+    issues = asyncio.run(wookieepedia.get_series_issues("Editions Probe Article"))
     assert issues == ["Foo Trade Vol. 1", "Foo Trade Vol. 2"]
 
 
