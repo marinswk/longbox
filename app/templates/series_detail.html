@@ -221,6 +221,29 @@
   {% endif %}
 </section>
 
+{# Delete the series outright. Useful for inferred / stub series the
+   user doesn't want to track. Comics keep their library entries
+   (their primary series_id is cleared and ComicSeries links drop);
+   only the Series row + classification goes away. #}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">DELETE SERIES</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Removes this series row and unlinks every comic from it. The
+    comics themselves stay in your library; they just lose their
+    membership in <strong>{{ series.name }}</strong>. No undo.
+  </p>
+  <form class="mt-3"
+        hx-post="/series/{{ series.id }}/delete"
+        hx-swap="none"
+        hx-confirm="Delete the series '{{ series.name }}'? Every linked comic stays in your library but loses this series membership. No undo.">
+    <input type="hidden" name="confirm" value="yes" />
+    <button type="submit"
+            class="rounded-lg border-4 border-black bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5 hover:bg-red-600">
+      🗑 Delete this series
+    </button>
+  </form>
+</section>
+
 {% if other_series %}
 <section class="panel mt-6 rounded-3xl p-6">
   <h3 class="font-display text-2xl tracking-wide">MERGE INTO ANOTHER SERIES</h3>

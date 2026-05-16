@@ -252,6 +252,30 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     return total
 
 
+async def backfill_prune_dangling_comicseries() -> int:
+    """Delete ComicSeries / ComicContainment rows whose comic_id
+    refers to a comic that no longer exists. Defensive against past
+    delete paths that didn't clean up link tables — leaves the DB
+    in a consistent state so the orphan-prune logic in comic_delete
+    can do its job without being misled by ghost link rows.
+    Returns total rows deleted across both tables.
+    """
+    from sqlalchemy import text
+    total = 0
+    async with SessionLocal() as session:
+        for table, col in [
+            ("comicseries", "comic_id"),
+            ("comiccontainment", "parent_id"),
+            ("comiccontainment", "child_id"),
+        ]:
+            r = await session.exec(text(
+                f"DELETE FROM {table} WHERE {col} NOT IN (SELECT id FROM comic)"
+            ))
+            total += int(r.rowcount or 0)
+        await session.commit()
+    return total
+
+
 async def backfill_comic_series_links() -> int:
     """Mirror every Comic.series_id value into the ComicSeries link
     table AND ensure exactly one row per comic is flagged `is_primary`

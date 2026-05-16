@@ -471,6 +471,67 @@ def test_inferred_series_resolves_to_canonical_article_title():
         assert guess is None
 
 
+def test_inferred_series_also_pre_populates_expected_issues():
+    """When the inferrer creates a Series, it should ALSO call
+    `get_series_issues` against the canonical article and write the
+    result to `expected_issues`. Otherwise the /series/{id} page
+    shows no missing-issues progress until the user clicks the
+    auto-link button per inferred series — and that's exactly what
+    the user complained about on /series/2 and /series/3."""
+    from unittest.mock import patch
+    from app.routers.add import _attach_inferred_series
+    from app.services.schemas import LookupCandidate
+
+    async def fake_get_article(title):
+        if title == "Pre Pop Series PPS 1":
+            return LookupCandidate(
+                source="wookieepedia", source_id=title, title=title,
+                series="Star Wars: Pre Pop Series PPS (comic series)",
+            )
+        return None
+
+    fake_issues = [
+        "Pre Pop Series PPS 1",
+        "Pre Pop Series PPS 2",
+        "Pre Pop Series PPS 3",
+    ]
+
+    async def fake_get_series_issues(article):
+        if article == "Star Wars: Pre Pop Series PPS (comic series)":
+            return fake_issues
+        return []
+
+    with patch("app.services.wookieepedia.get_article", side_effect=fake_get_article), \
+         patch("app.services.wookieepedia.get_series_issues", side_effect=fake_get_series_issues), \
+         _client() as client:
+        cid = _save(client, title="Pre Pop Probe",
+                    isbn_13="9789000040001",
+                    series="Pre Pop Primary")
+        async def _seed():
+            async with SessionLocal() as session:
+                c = await session.get(Comic, cid)
+                c.collected_issues = "Pre Pop Series PPS 1\nPre Pop Series PPS 2\n"
+                session.add(c)
+                await session.commit()
+        asyncio.run(_seed())
+
+        asyncio.run(_attach_inferred_series(cid))
+
+        async def _check():
+            async with SessionLocal() as session:
+                return (await session.exec(
+                    select(Series).where(
+                        Series.name == "Star Wars: Pre Pop Series PPS (comic series)"
+                    )
+                )).first()
+        ser = asyncio.run(_check())
+        assert ser is not None
+        assert ser.expected_issues is not None
+        # All three fake issues should be there, newline-joined.
+        for issue in fake_issues:
+            assert issue in ser.expected_issues
+
+
 def test_inferred_series_skips_when_canonical_resolution_fails():
     """When the issue article can't be resolved on Wookieepedia (404
     or network error), the inferrer must SKIP rather than create a
@@ -755,6 +816,123 @@ def test_clean_decodes_html_entities():
     assert _clean("3964&ndash;3962 BBY") == "3964–3962 BBY"
     assert _clean("Foo &amp; Bar") == "Foo & Bar"
     assert _clean("non&mdash;breaking") == "non—breaking"
+
+
+def test_comic_delete_prunes_all_linked_series_not_just_primary():
+    """Regression: deleting the only comic in a multi-linked series
+    set should orphan-prune EVERY one of those series, not just the
+    primary. Before this fix, the comic delete cascade only checked
+    Comic.series_id and left inferred non-primary series behind."""
+    from app.models import ComicSeries
+
+    with _client() as client:
+        cid = _save(client, title="CD Probe",
+                    isbn_13="9789000040101", series="CD Primary")
+        async def _seed_extras():
+            async with SessionLocal() as session:
+                # Add two extra series as non-primary links.
+                a = Series(name="CD Extra Alpha")
+                b = Series(name="CD Extra Beta")
+                session.add(a); session.add(b)
+                await session.flush()
+                session.add(ComicSeries(comic_id=cid, series_id=a.id, is_primary=False))
+                session.add(ComicSeries(comic_id=cid, series_id=b.id, is_primary=False))
+                await session.commit()
+                return a.id, b.id
+        a_id, b_id = asyncio.run(_seed_extras())
+
+        # Delete the comic; all three series should orphan-prune.
+        r = client.post(f"/comic/{cid}/delete")
+        assert r.status_code == 204
+
+        async def _check():
+            async with SessionLocal() as session:
+                ghost_primary = (await session.exec(
+                    select(Series).where(Series.name == "CD Primary")
+                )).first()
+                ghost_a = await session.get(Series, a_id)
+                ghost_b = await session.get(Series, b_id)
+                return ghost_primary, ghost_a, ghost_b
+        ghost_primary, ghost_a, ghost_b = asyncio.run(_check())
+        assert ghost_primary is None
+        assert ghost_a is None
+        assert ghost_b is None
+
+
+def test_series_delete_endpoint_drops_series_and_unlinks_comics():
+    """The /series/{id}/delete endpoint removes the series row, sets
+    Comic.series_id to NULL for any comic that had it as primary,
+    and drops every ComicSeries link pointing at it. The comics
+    themselves stay in the library."""
+    from app.models import ComicSeries
+
+    with _client() as client:
+        cid = _save(client, title="SD Comic",
+                    isbn_13="9789000040201", series="SD Primary")
+        comic = _comic(cid)
+        sid = comic.series_id
+
+        # Without confirm=yes it must refuse.
+        r = client.post(f"/series/{sid}/delete")
+        assert r.status_code == 422
+
+        # With confirm=yes it deletes.
+        r = client.post(f"/series/{sid}/delete", data={"confirm": "yes"})
+        assert r.status_code == 204
+
+        async def _check():
+            async with SessionLocal() as session:
+                ghost = await session.get(Series, sid)
+                comic_still = await session.get(Comic, cid)
+                link_still = (await session.exec(
+                    select(ComicSeries).where(ComicSeries.series_id == sid)
+                )).first()
+                return ghost, comic_still, link_still
+        ghost, comic_still, link_still = asyncio.run(_check())
+        # Series gone; comic still there (but with series_id=None);
+        # link gone.
+        assert ghost is None
+        assert comic_still is not None
+        assert comic_still.series_id is None
+        assert link_still is None
+
+
+def test_series_merge_reassigns_comicseries_links_not_just_primary_fk():
+    """Regression: merging series A into series B must move every
+    ComicSeries link from A→B, not just the Comic.series_id FK.
+    Otherwise dangling links to the deleted A row break later
+    orphan-prune attempts."""
+    from app.models import ComicSeries
+
+    with _client() as client:
+        # Save two comics in different series; we'll merge one into
+        # the other and verify the link table got moved too.
+        cid_src = _save(client, title="Merge Link Src",
+                        isbn_13="9789000040301", series="Merge Link Source")
+        cid_tgt = _save(client, title="Merge Link Tgt",
+                        isbn_13="9789000040302", series="Merge Link Target")
+        comic_src = _comic(cid_src)
+        comic_tgt = _comic(cid_tgt)
+        src_id = comic_src.series_id
+        tgt_id = comic_tgt.series_id
+
+        r = client.post(f"/series/{src_id}/merge", data={"target_id": tgt_id})
+        assert r.status_code == 204
+
+        async def _check():
+            async with SessionLocal() as session:
+                # No surviving link pointing at the deleted source.
+                dangling = (await session.exec(
+                    select(ComicSeries).where(ComicSeries.series_id == src_id)
+                )).all()
+                # The source comic's link now points at the target.
+                src_links = (await session.exec(
+                    select(ComicSeries).where(ComicSeries.comic_id == cid_src)
+                )).all()
+                return dangling, [l.series_id for l in src_links]
+        dangling, src_link_targets = asyncio.run(_check())
+        assert dangling == []
+        assert tgt_id in src_link_targets
 
 
 def test_comic_series_search_excludes_already_linked_series():

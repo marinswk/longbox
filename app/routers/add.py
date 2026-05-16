@@ -271,8 +271,18 @@ async def _attach_inferred_series(comic_id: int) -> None:
                 last_err = e
                 cand = None
         if cand is not None and cand.series:
-            resolved.append((group, cand.series,
-                             cand.series_article_id or cand.series))
+            canonical_name = cand.series
+            canonical_article = cand.series_article_id or cand.series
+            # Also pre-fetch the canonical series' issue list so the
+            # /series/{id} page works out-of-the-box without the user
+            # having to click "Pull issues automatically" once per
+            # inferred series. Cached via MetadataCache so the second
+            # omnibus that collects the same series pays no cost.
+            try:
+                issues = await wookieepedia.get_series_issues(canonical_article)
+            except Exception:
+                issues = []
+            resolved.append((group, canonical_name, canonical_article, issues))
         else:
             # Canonical resolution failed even after retry. Skip
             # writing a guess-named row — leaves a clean state for
@@ -290,7 +300,7 @@ async def _attach_inferred_series(comic_id: int) -> None:
     # / writes from Phase 2 are done; we can hold this session as
     # long as we like.
     async with SessionLocal() as session:
-        for group, canonical_name, canonical_article in resolved:
+        for group, canonical_name, canonical_article, issues in resolved:
             # Look up by canonical name first. If absent AND the
             # canonical differs from the guess, also check the guess —
             # an earlier name-only inference may have created a row
@@ -362,15 +372,25 @@ async def _attach_inferred_series(comic_id: int) -> None:
                     publisher_id=publisher_id,
                     source="wookieepedia" if canonical_article else None,
                     source_id=canonical_article,
+                    expected_issues="\n".join(issues) if issues else None,
                 )
                 session.add(existing)
                 await session.flush()
             else:
                 # Stamp source/source_id on a previously-bare row that
                 # was originally created by name-only inference.
+                dirty = False
                 if canonical_article and not existing.source_id:
                     existing.source = "wookieepedia"
                     existing.source_id = canonical_article
+                    dirty = True
+                # Pre-populate expected_issues for rows that don't
+                # have one yet. We never overwrite an existing list —
+                # the user may have edited it manually.
+                if issues and not existing.expected_issues:
+                    existing.expected_issues = "\n".join(issues)
+                    dirty = True
+                if dirty:
                     session.add(existing)
 
             if existing.id == primary_series_id:

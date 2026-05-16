@@ -460,28 +460,63 @@ async def comic_delete(comic_id: int, session: SessionDep) -> Response:
     comic = await session.get(Comic, comic_id)
     if comic is None:
         raise HTTPException(status_code=404, detail="comic not found")
-    series_id = comic.series_id
+
+    # Snapshot every series this comic was linked to — primary FK +
+    # multi-series link table. We'll check each one for orphan-status
+    # after the comic is gone.
+    from app.models import ComicSeries, ComicContainment
+    from sqlalchemy import func as _func, delete as sa_delete
+    linked_series_ids: set[int] = set()
+    if comic.series_id is not None:
+        linked_series_ids.add(comic.series_id)
+    link_rows = (await session.exec(
+        select(ComicSeries.series_id).where(ComicSeries.comic_id == comic_id)
+    )).all()
+    for r in link_rows:
+        linked_series_ids.add(r if isinstance(r, int) else r[0])
+
+    # Cascade: drop link rows (ComicSeries + ComicContainment in both
+    # directions) before the comic itself, so we don't leave dangling
+    # FK references.
+    await session.exec(sa_delete(ComicSeries).where(ComicSeries.comic_id == comic_id))
+    await session.exec(sa_delete(ComicContainment).where(ComicContainment.parent_id == comic_id))
+    await session.exec(sa_delete(ComicContainment).where(ComicContainment.child_id == comic_id))
     copies = await session.exec(select(Copy).where(Copy.comic_id == comic_id))
     for c in copies.all():
         await session.delete(c)
     await session.delete(comic)
     await session.commit()
 
-    # If this was the last comic in its series, prune the now-orphan
-    # Series row so it doesn't pollute facets / dropdowns. Don't touch
-    # Publisher rows — those can be referenced by series we still have.
-    if series_id is not None:
-        from sqlalchemy import func as _func
-        remaining = (await session.exec(
-            select(_func.count(Comic.id)).where(Comic.series_id == series_id)
-        )).one()
-        if isinstance(remaining, tuple):
-            remaining = remaining[0]
-        if int(remaining or 0) == 0:
-            ghost = await session.get(Series, series_id)
+    # Auto-prune every now-orphan series: any of the previously-linked
+    # series rows that no longer has any Comic referencing it (via
+    # Comic.series_id OR ComicSeries pointing at a still-existing
+    # comic) gets deleted so the library facets / dropdowns don't
+    # keep ghost entries. Publishers are left alone — they can be
+    # referenced by other series we still have.
+    #
+    # The link-count JOINs to Comic so dangling ComicSeries rows
+    # (pointing at comic_ids that no longer exist) don't accidentally
+    # protect the series from being pruned.
+    for sid in linked_series_ids:
+        primary_refs = (await session.exec(
+            select(_func.count(Comic.id)).where(Comic.series_id == sid)
+        )).first()
+        primary_n = primary_refs[0] if isinstance(primary_refs, tuple) else primary_refs
+        link_refs = (await session.exec(
+            select(_func.count())
+            .select_from(ComicSeries)
+            .join(Comic, Comic.id == ComicSeries.comic_id)
+            .where(ComicSeries.series_id == sid)
+        )).first()
+        link_n = link_refs[0] if isinstance(link_refs, tuple) else link_refs
+        if int(primary_n or 0) == 0 and int(link_n or 0) == 0:
+            # Drop any dangling link rows that point at gone comics
+            # before deleting the series — keeps the FK cleanup tidy.
+            await session.exec(sa_delete(ComicSeries).where(ComicSeries.series_id == sid))
+            ghost = await session.get(Series, sid)
             if ghost is not None:
                 await session.delete(ghost)
-                await session.commit()
+    await session.commit()
 
     return Response(status_code=204, headers={"HX-Redirect": "/library"})
 

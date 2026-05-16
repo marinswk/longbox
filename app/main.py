@@ -26,6 +26,7 @@ async def lifespan(_app: FastAPI):
         backfill_comic_series_links,
         backfill_inferred_series_from_collected_issues,
         backfill_merge_duplicate_series, backfill_normalize_format,
+        backfill_prune_dangling_comicseries,
         backfill_strip_multiline_names, backfill_wookieepedia_fandom,
     )
 
@@ -47,6 +48,10 @@ async def lifespan(_app: FastAPI):
     # (e.g. newline-blobs) and now normalize to the same value. Runs AFTER
     # the multi-line strip so the dedup probe sees the cleaned names.
     await backfill_merge_duplicate_series()
+    # Sweep dangling ComicSeries / ComicContainment rows pointing at
+    # comics that no longer exist (legacy data from delete paths
+    # that didn't clean up link tables). Idempotent.
+    await backfill_prune_dangling_comicseries()
     # Mirror Comic.series_id into ComicSeries for every comic so the
     # multi-series-aware queries (series detail, comic-detail series
     # section) see the primary series link. Idempotent.

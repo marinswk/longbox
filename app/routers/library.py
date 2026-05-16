@@ -614,37 +614,61 @@ async def library_bulk_delete(
 
     from sqlalchemy import delete as sa_delete
 
-    # Snapshot the series_ids first so we can prune orphans after the
-    # comics are gone. `session.exec(select(col))` returns scalars for a
-    # single-column query, not tuples.
-    rows = (
+    # Snapshot every series these comics were linked to — primary FK
+    # AND the multi-series link table — so we can orphan-prune
+    # afterwards. Previously we only snapshotted Comic.series_id,
+    # which missed inferred non-primary series; deleting an omnibus
+    # left "Star Wars: Knights of the Old Republic (comic series)"
+    # behind as a ghost in the library facets.
+    from app.models import ComicSeries, ComicContainment, ComicCreator
+    series_ids: set[int] = set()
+    primary_rows = (
         await session.exec(
             select(Comic.series_id).where(Comic.id.in_(comic_id))
         )
     ).all()
-    series_ids = {
-        (r[0] if isinstance(r, tuple) else r) for r in rows
-        if (r[0] if isinstance(r, tuple) else r) is not None
-    }
+    for r in primary_rows:
+        v = r[0] if isinstance(r, tuple) else r
+        if v is not None:
+            series_ids.add(v)
+    link_rows = (
+        await session.exec(
+            select(ComicSeries.series_id).where(ComicSeries.comic_id.in_(comic_id))
+        )
+    ).all()
+    for r in link_rows:
+        v = r[0] if isinstance(r, tuple) else r
+        if v is not None:
+            series_ids.add(v)
 
     # Cascade delete: link tables first, then Copy, then Comic.
     await session.exec(sa_delete(ComicTag).where(ComicTag.comic_id.in_(comic_id)))
     await session.exec(sa_delete(ComicArc).where(ComicArc.comic_id.in_(comic_id)))
-    # ComicCreator lives in models too; clear it as well.
-    from app.models import ComicCreator
     await session.exec(sa_delete(ComicCreator).where(ComicCreator.comic_id.in_(comic_id)))
+    await session.exec(sa_delete(ComicSeries).where(ComicSeries.comic_id.in_(comic_id)))
+    await session.exec(sa_delete(ComicContainment).where(ComicContainment.parent_id.in_(comic_id)))
+    await session.exec(sa_delete(ComicContainment).where(ComicContainment.child_id.in_(comic_id)))
     await session.exec(sa_delete(Copy).where(Copy.comic_id.in_(comic_id)))
     await session.exec(sa_delete(Comic).where(Comic.id.in_(comic_id)))
     await session.commit()
 
     # Prune now-empty series so the library facets don't show ghosts.
+    # A series is "empty" when no Comic.series_id and no ComicSeries
+    # row references it.
     if series_ids:
         for sid in series_ids:
-            remaining = (await session.exec(
+            primary_n = (await session.exec(
                 select(func.count(Comic.id)).where(Comic.series_id == sid)
             )).first()
-            n = remaining[0] if isinstance(remaining, tuple) else remaining
-            if int(n or 0) == 0:
+            primary_n = primary_n[0] if isinstance(primary_n, tuple) else primary_n
+            link_n = (await session.exec(
+                select(func.count())
+                .select_from(ComicSeries)
+                .join(Comic, Comic.id == ComicSeries.comic_id)
+                .where(ComicSeries.series_id == sid)
+            )).first()
+            link_n = link_n[0] if isinstance(link_n, tuple) else link_n
+            if int(primary_n or 0) == 0 and int(link_n or 0) == 0:
                 ghost = await session.get(Series, sid)
                 if ghost is not None:
                     await session.delete(ghost)

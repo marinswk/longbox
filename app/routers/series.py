@@ -510,6 +510,51 @@ async def series_auto_link(
     return Response(status_code=204, headers={"HX-Refresh": "true"})
 
 
+@router.post("/series/{series_id}/delete")
+async def series_delete(
+    series_id: int, session: SessionDep,
+    confirm: str = Form(default=""),
+) -> Response:
+    """Delete a Series row plus every link that points at it.
+
+    Comics that had this series as their primary lose the FK (set to
+    NULL); comics linked via ComicSeries simply drop the link. The
+    comics themselves stay in the library — only the series
+    classification goes away.
+
+    Server-side `confirm=yes` belt-and-braces: the UI fires a JS
+    confirm() too, but a misconfigured curl shouldn't be able to
+    nuke a series without explicit intent.
+    """
+    series = await session.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="series not found")
+    if confirm != "yes":
+        raise HTTPException(
+            status_code=422,
+            detail="Missing confirm=yes; deletion requires explicit confirmation.",
+        )
+
+    from sqlalchemy import delete as sa_delete, update as sa_update
+    from app.models import ComicSeries
+
+    # 1. Clear primary FK on any comic that was using this as primary.
+    await session.exec(
+        sa_update(Comic)
+        .where(Comic.series_id == series_id)
+        .values(series_id=None)
+    )
+    # 2. Drop every link-table row pointing at this series.
+    await session.exec(
+        sa_delete(ComicSeries).where(ComicSeries.series_id == series_id)
+    )
+    # 3. Drop the series itself.
+    await session.delete(series)
+    await session.commit()
+
+    return Response(status_code=204, headers={"HX-Redirect": "/series"})
+
+
 @router.post("/series/{series_id}/merge")
 async def series_merge(
     series_id: int,
@@ -546,6 +591,23 @@ async def series_merge(
         update(Comic)
         .where(Comic.series_id == series_id)
         .values(series_id=target_id, updated_at=datetime.now(UTC))
+    )
+    # Move every multi-series link from source to target. Without
+    # this, the ComicSeries table holds dangling references to the
+    # deleted source row — which then mislead the orphan-prune
+    # logic on comic deletion. INSERT OR IGNORE handles the case
+    # where a comic is already linked to both source and target.
+    from sqlalchemy import text as _text
+    from app.models import ComicSeries
+    await session.exec(_text(
+        "INSERT OR IGNORE INTO comicseries "
+        "  (comic_id, series_id, is_primary, created_at) "
+        "SELECT comic_id, :tgt, is_primary, created_at "
+        "FROM comicseries WHERE series_id = :src"
+    ).bindparams(tgt=target_id, src=series_id))
+    from sqlalchemy import delete as sa_delete
+    await session.exec(
+        sa_delete(ComicSeries).where(ComicSeries.series_id == series_id)
     )
     session.add(target)
     await session.delete(source)
