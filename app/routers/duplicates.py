@@ -1,10 +1,15 @@
-"""Duplicates view — comics where you own more than one copy.
+"""Duplicates view — issue-level duplicate detection across single
+issues, TPBs, and omnibuses.
 
-GET /duplicates  →  ranked grid, highest copy-count first.
+GET /duplicates  →  reverse-index of `issue article title → owning
+                    Comics`, filtered to entries with ≥2 owners.
 
-Pure aggregation, no schema. Useful for trade/sale planning ("which
-comics do I have multiples of?") and for spotting accidental
-double-saves.
+The same underlying issue can appear via:
+  * a single-issue Comic whose `source_id` is that article;
+  * a TPB / omnibus whose `collected_issues` lists that article.
+
+Computation lives in `app.services.duplicates`; this router is just
+glue (filter / sort / group params → render).
 """
 
 from __future__ import annotations
@@ -12,15 +17,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc
-from sqlmodel import func, select
+from sqlalchemy import func
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
-from app.models import Comic, Copy, Publisher, Series
+from app.models import Comic, Copy, Series
+from app.services.duplicates import (
+    apply_filters_and_sort, build_duplicate_index, group_by_series, stats,
+)
 
 router = APIRouter(tags=["duplicates"])
 
@@ -29,41 +37,81 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
+_MIX_VALUES = {"all", "singles_and_collection", "collections_only"}
+_SORT_VALUES = {"count_desc", "title_asc", "series_asc"}
+
 
 @router.get("/duplicates", response_class=HTMLResponse)
-async def duplicates_page(request: Request, session: SessionDep) -> HTMLResponse:
-    # Sub-aggregate: comic_id -> count of copies, only keeping count > 1.
-    copy_count = func.count(Copy.id).label("copy_count")
-    counts_sub = (
-        select(Copy.comic_id, copy_count)
-        .group_by(Copy.comic_id)
-        .having(copy_count > 1)
-        .subquery()
-    )
+async def duplicates_page(
+    request: Request,
+    session: SessionDep,
+    mix: str = Query(default="all"),
+    sort: str = Query(default="count_desc"),
+    series: str = Query(default=""),
+    group: str = Query(default="series"),
+    min_copies: int = Query(default=2, ge=2, le=10),
+) -> HTMLResponse:
+    if mix not in _MIX_VALUES:
+        mix = "all"
+    if sort not in _SORT_VALUES:
+        sort = "count_desc"
+    group = "series" if group != "none" else "none"
 
-    stmt = (
-        select(Comic, Series, Publisher, counts_sub.c.copy_count)
-        .select_from(counts_sub)
-        .join(Comic, Comic.id == counts_sub.c.comic_id)
-        .join(Series, Series.id == Comic.series_id, isouter=True)
-        .join(Publisher, Publisher.id == Series.publisher_id, isouter=True)
-        .order_by(desc(counts_sub.c.copy_count), Comic.title)
-    )
-    rows = (await session.exec(stmt)).all()
+    # Owned comics only: Copy count > 0. Stubs (no Copy attached)
+    # don't count toward duplicate detection — they wouldn't make
+    # physical sense.
+    owned_ids = (await session.exec(
+        select(Copy.comic_id).distinct()
+    )).all()
+    owned_ids = {r if isinstance(r, int) else r[0] for r in owned_ids}
+    if not owned_ids:
+        owned_comics: list[Comic] = []
+    else:
+        owned_comics = (await session.exec(
+            select(Comic).where(Comic.id.in_(owned_ids))
+        )).all()
 
-    items = [
-        {"comic": comic, "series": ser, "publisher": pub, "copies": int(n)}
-        for (comic, ser, pub, n) in rows
+    all_series = (await session.exec(select(Series))).all()
+
+    rows = build_duplicate_index(
+        owned_comics, all_series, min_copies=min_copies,
+    )
+    rows = apply_filters_and_sort(
+        rows,
+        mix=mix,
+        sort=sort,
+        series=series or None,
+    )
+    summary = stats(rows)
+
+    groups = group_by_series(rows) if group == "series" else [
+        {"label": None, "rows": rows, "count": sum(r.count - 1 for r in rows)}
     ]
-    total_dup_comics = len(items)
-    total_extra_copies = sum(it["copies"] - 1 for it in items)
+
+    # Series filter facet: every series name that has at least one
+    # duplicate row, with the duplicate count.
+    series_facet_counts: dict[str, int] = {}
+    for r in rows:
+        series_facet_counts[r.derived_series] = (
+            series_facet_counts.get(r.derived_series, 0) + 1
+        )
+    series_facet = sorted(
+        series_facet_counts.items(), key=lambda kv: (-kv[1], kv[0].lower()),
+    )
 
     return templates.TemplateResponse(
         request,
         "duplicates.html",
         {
-            "items": items,
-            "total_dup_comics": total_dup_comics,
-            "total_extra_copies": total_extra_copies,
+            "summary": summary,
+            "groups": groups,
+            "series_facet": series_facet,
+            "selected": {
+                "mix": mix,
+                "sort": sort,
+                "series": series,
+                "group": group,
+                "min_copies": min_copies,
+            },
         },
     )
