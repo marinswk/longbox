@@ -1272,6 +1272,15 @@ async def get_series_issues(article_title: str) -> list[str]:
         if items:
             return items
 
+    # Path 2.5: Comictable rows ANYWHERE in the wikitext, not just
+    # inside an ==Issues== section. Articles like "Star Wars:
+    # Shadows of the Empire (comic series)" put their Comictable-
+    # issue list directly inside ==Media== with no Issues subheader,
+    # so the section-scoped path above misses them.
+    items = _extract_comictable_issues(wikitext)
+    if items:
+        return items
+
     # Path 3: gallery-based articles that DON'T put their galleries
     # under a Volumes-style heading (Epic Collection puts them under
     # ==Media==/===Legends===/===Canon=== with no top-level Volumes

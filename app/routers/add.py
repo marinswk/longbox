@@ -349,6 +349,56 @@ async def _attach_inferred_series(comic_id: int) -> None:
     if not by_canon:
         return
 
+    # Umbrella-parent detection: a sub-series named
+    # "<Umbrella>: <X>(?: (comic series))?" likely has its issues
+    # included in an "<Umbrella>" parent article on Wookieepedia
+    # (e.g. "Classic Star Wars: The Empire Strikes Back (comic
+    # series)" rolls up into "Classic Star Wars"). Probe each
+    # colon-prefixed canonical to see if the prefix article exists
+    # as a real series; if so, add it as another canonical. The
+    # subsumed-series check below then drops the sub-series in
+    # favour of the umbrella, giving the user a single tidy chip
+    # instead of two near-duplicate ones.
+    umbrella_probes: list[tuple[str, str]] = []  # (umbrella_name, sample_title)
+    for canonical_name, info in list(by_canon.items()):
+        m = re.match(r"^(.+?):\s+.+$", canonical_name)
+        if not m:
+            continue
+        umbrella = m.group(1).strip()
+        # Skip the bare "Star Wars" parent — too broad, would over-
+        # cluster legitimately separate series.
+        if not umbrella or umbrella.casefold() in {"star wars"}:
+            continue
+        if umbrella in by_canon:
+            continue
+        umbrella_probes.append((umbrella, info["sample_issue_title"]))
+
+    async def _probe_umbrella(umbrella: str):
+        async with sem:
+            try:
+                issues = await wookieepedia.get_series_issues(umbrella)
+            except Exception:
+                return umbrella, []
+            return umbrella, issues
+
+    if umbrella_probes:
+        probe_results = await _asyncio.gather(
+            *( _probe_umbrella(u) for u, _ in umbrella_probes )
+        )
+        umbrellas_found = {u: issues for u, issues in probe_results if issues}
+        for umbrella, sample in umbrella_probes:
+            if umbrella not in umbrellas_found:
+                continue
+            # `name_guess` MUST equal `canonical_name` here (the
+            # umbrella itself) so Phase 3's rename branch doesn't
+            # mis-fire by finding an unrelated sub-series row that
+            # happens to share the sub-series guess name.
+            by_canon[umbrella] = {
+                "name_guess": umbrella,
+                "sample_issue_title": sample,
+                "article_id": umbrella,
+            }
+
     # Pre-fetch expected_issues per canonical (cached after first
     # hit, same Semaphore-bounded parallelism). Also pull the
     # canceled-issues subset so newly-created Series rows get the
