@@ -682,6 +682,71 @@ _LINK_ARTICLE = re.compile(r"\[\[([^\]\|]+)")
 _STORYCITE = re.compile(r"\{\{StoryCite\b([^}]*)\}\}")
 
 
+# {{Tales|N|Story title (...)}} — shorthand template for stories
+# published in Star Wars Tales N. The third positional argument may
+# carry parenthetical disambiguation like "(comic story)" which we
+# strip — it's only useful for resolving the story article and we
+# don't fetch it. First capture is the issue number, second the
+# (cleaned) story title.
+_TALES_TEMPLATE_RX = re.compile(
+    r"\{\{Tales\s*\|\s*(\d+)\s*\|\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}",
+    re.IGNORECASE,
+)
+
+
+def _extract_tales_template(line: str) -> tuple[Optional[str], Optional[str]]:
+    """Return (story, book) for a `{{Tales|N|Title}}` line, or
+    (None, None) when no template is present. The book reference is
+    synthesised as "Star Wars Tales N" — that's the canonical
+    Wookieepedia issue article."""
+    m = _TALES_TEMPLATE_RX.search(line)
+    if not m:
+        return None, None
+    issue_n = m.group(1).strip()
+    story = m.group(2).strip()
+    # Strip a trailing "(comic story)" disambiguator if present —
+    # it's just a wiki-side namespace hint, not part of the title.
+    story = re.sub(r"\s*\(comic story\)\s*$", "", story, flags=re.IGNORECASE)
+    return story, f"Star Wars Tales {issue_n}"
+
+
+# Story-in-book reference using em-dash separator:
+#   "Story Title" &mdash; ''[[Book Reference]]''
+#   Introduction comic from ''[[Star Wars Tales 4]]''
+# Used on Wookieepedia for short-story entries that don't fit the
+# {{StoryCite}} / {{Tales}} template shape. Detect by scanning a
+# bullet line for either an explicit em-dash / "&mdash;" separator
+# or a leading "from " marker, then capture the LAST wikilink
+# after that point — that's the book article.
+_MDASH_BOOK_RX = re.compile(
+    r"(?:&mdash;|—|\bfrom\b)\s*'*\[\[([^\]\|\n]+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_mdash_story_ref(line: str) -> tuple[Optional[str], Optional[str]]:
+    """For lines like `"[[Nomad]] Chapter One" &mdash; ''[[Star Wars
+    Tales 21]]''`, return (story_label, book_reference). The
+    story is the cleaned text BEFORE the separator; the book is the
+    article title of the wikilink after it.
+
+    Returns (None, None) when the pattern isn't present.
+    """
+    m = _MDASH_BOOK_RX.search(line)
+    if not m:
+        return None, None
+    book = m.group(1).strip()
+    # Anything before the separator is the story-side text. Pull a
+    # cleaned label out for display. We strip wikilinks down to
+    # display text, ditch italic markers + leading quotation marks.
+    pre = line[: m.start()]
+    pre = _LINK_PIPE.sub(r"\2", pre)
+    pre = _LINK_PLAIN.sub(r"\1", pre)
+    pre = _BOLD_ITALIC.sub("", pre)
+    pre = pre.strip().strip("\"'“”").strip()
+    return (pre or None), book
+
+
 def _extract_storycite_parts(line: str) -> tuple[Optional[str], Optional[str]]:
     """Return `(story, book)` extracted from a
     `{{StoryCite|story=…|book=…}}` template, or `(None, None)` if no
@@ -762,27 +827,43 @@ def _extract_bullet_targets(body: str) -> list[str]:
     out: list[str] = []
     for raw in chosen:
         line = re.sub(r"^[:*]+\s*", "", raw)
-        link = _LINK_ARTICLE.search(line)
-        if link:
-            out.append(link.group(1).strip())
-            continue
-        story, book = _extract_storycite_parts(line)
+        # Story-in-book references take priority over the bare
+        # wikilink fallthrough — they carry the BOOK article
+        # explicitly, which is what series inference needs.
+        # Detection order matters: try templated forms before the
+        # plain em-dash heuristic (which has more false-positive
+        # risk on unrelated lines).
+        story, book = _extract_tales_template(line)
+        if story is None and book is None:
+            story, book = _extract_storycite_parts(line)
+        if story is None and book is None:
+            # Em-dash / "from" separator only counts when the line
+            # actually has a wikilink after the separator; the
+            # _MDASH_BOOK_RX inside the helper enforces that.
+            story, book = _extract_mdash_story_ref(line)
+
         if story or book:
-            # Emit ONE line per StoryCite combining both halves
-            # using trailing-paren syntax: `"{story} ({book})"`.
-            # parse_entries downstream regex-matches " (X)$" to
-            # extract the book reference. Parens are safer than the
-            # em-dash we used earlier — real Wookieepedia article
-            # titles can contain em-dashes ("Legacy — War 1"), so
-            # splitting on " — " mis-routed those as StoryCites.
-            # Issue articles never end with a parenthesised
-            # title-like phrase, so this is unambiguous.
+            # Emit ONE line combining both halves using trailing-
+            # paren syntax: `"{story} ({book})"`. parse_entries
+            # downstream regex-matches " (X)$" to extract the book
+            # reference. Parens are safer than em-dash separators
+            # (real article titles like "Legacy — War 1" contain
+            # em-dashes and would otherwise get mis-split).
             if story and book:
                 out.append(f"{story} ({book})")
             elif book:
                 out.append(book)
             elif story:
                 out.append(story)
+            continue
+
+        # Plain wikilink fallthrough — last so the typed extractors
+        # above get first dibs on lines that have both prose +
+        # a wikilink (e.g. `"Story" — ''[[Book]]''` where the
+        # first wikilink is just a concept reference).
+        link = _LINK_ARTICLE.search(line)
+        if link:
+            out.append(link.group(1).strip())
             continue
         cleaned = _clean(line)
         if cleaned:
