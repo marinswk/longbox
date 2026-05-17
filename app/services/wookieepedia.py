@@ -543,7 +543,10 @@ _TABLE_ROW_ISSUE_RX = re.compile(
     r"\|\s*"                  # opening cell pipe
     r"(?:[^|\n]*?\|)?"         # optional style attribute + inner pipe
     r"\s*\d+[A-Za-z]?\s*"      # numeric issue cell value
-    r"\|\|\s*"                 # cell separator
+    r"\|\|"                    # cell separator
+    r"[^\[\n]*?"               # any inline markup (e.g. <center>) before
+                                # the wikilink — non-greedy, no `[` so we
+                                # stop AT the wikilink.
     r"\[\[([^\]\|\n]+)"        # opening wikilink — capture article title
 )
 
@@ -765,14 +768,17 @@ def _extract_bullet_targets(body: str) -> list[str]:
             continue
         story, book = _extract_storycite_parts(line)
         if story or book:
-            # Emit ONE line per StoryCite using a unicode em-dash
-            # separator: `"{story} — {book}"`. parse_entries
-            # downstream splits on the same em-dash to expose
-            # `article_id=book` to inference + match logic while
-            # the display text shows both halves. One issue per
-            # bullet means the user sees an accurate Contents list.
+            # Emit ONE line per StoryCite combining both halves
+            # using trailing-paren syntax: `"{story} ({book})"`.
+            # parse_entries downstream regex-matches " (X)$" to
+            # extract the book reference. Parens are safer than the
+            # em-dash we used earlier — real Wookieepedia article
+            # titles can contain em-dashes ("Legacy — War 1"), so
+            # splitting on " — " mis-routed those as StoryCites.
+            # Issue articles never end with a parenthesised
+            # title-like phrase, so this is unambiguous.
             if story and book:
-                out.append(f"{story} — {book}")
+                out.append(f"{story} ({book})")
             elif book:
                 out.append(book)
             elif story:

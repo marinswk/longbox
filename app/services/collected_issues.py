@@ -33,6 +33,12 @@ _COLLECTING_PREFIX = re.compile(r"^\s*collect(?:s|ing)\b\s*:?\s*", re.IGNORECASE
 # Anything in here disqualifies an entry from being an article-title link.
 _NON_TITLE_CHARS = re.compile(r"[,;#]")
 
+# "Story title (Book Name N)" combined StoryCite shape — inner must
+# end with a number to qualify as an issue reference. Anchored to
+# end-of-string so legit titles with mid-string parens (e.g.
+# "Star Wars (1977) 1") don't accidentally match.
+_COMBINED_PAREN_RX = re.compile(r"^(.+?)\s+\(([^()]+\s+\d+[A-Za-z]?)\)$")
+
 
 @dataclass
 class CollectedEntry:
@@ -139,10 +145,16 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
       * "COLLECTING:" prose prefix is stripped from the first entry,
         and if what remains is a multi-item list ("A 1-5, B 1") the
         whole entry is kept verbatim and marked `linkable=False`.
-      * `"<Story> — <Book>"` em-dash combined entries (emitted by the
-        StoryCite parser): the display text keeps both halves, but
+      * `"Story (Book)"` paren-combined entries emitted by the
+        StoryCite parser: the display text keeps both halves, but
         `article_id` is set to just the book half so callers
         resolving / linking go straight to the real wiki article.
+        Detection requires a trailing parens pair AND the inner
+        text matching an article-title shape (with a trailing
+        number — magazines like "Pizzazz 1" or "Star Wars Weekly 60"
+        always have one). The number requirement is what stops
+        unrelated parenthetical titles like "Star Wars (1977)"
+        being mis-treated as combined entries.
     """
     if not raw:
         return []
@@ -151,14 +163,24 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
         text = line.strip()
         if not text:
             continue
-        # Em-dash split: "Story — Book". The book half is the
-        # Wookieepedia article title to link / resolve.
-        if " — " in text:
-            story_part, _, book_part = text.rpartition(" — ")
-            book_part = book_part.strip()
-            if book_part and _looks_like_article_title(book_part):
+        # Trailing-parens combined entry: "Story (Book N)". We need
+        # the LEFT-of-paren part to ALSO look like a clean entry —
+        # otherwise free-form prose like
+        #   "COLLECTING: Star Wars: Revelations (2023) 1 (Story 6)"
+        # would be mistaken for a combined entry just because it
+        # happens to end with parens-wrapped digits.
+        m = _COMBINED_PAREN_RX.match(text)
+        if m:
+            story_part = m.group(1).strip()
+            inner = m.group(2).strip()
+            if (
+                inner
+                and _looks_like_article_title(inner)
+                and story_part
+                and _looks_like_article_title(story_part)
+            ):
                 out.append(CollectedEntry(
-                    text=text, linkable=True, article_id=book_part,
+                    text=text, linkable=True, article_id=inner,
                 ))
                 continue
         # Strip the "COLLECTING:" prefix on the very first entry so it
