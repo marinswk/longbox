@@ -73,17 +73,41 @@ def _format_icon(fmt: Optional[str]) -> str:
     return "📖"
 
 
-def _comic_coverage(comic: Comic) -> set[str]:
+def _comic_coverage(comic: Comic, known_issues: set[str]) -> set[str]:
     """The set of Wookieepedia issue article titles this comic
-    covers — its own source_id if it's a single Wookieepedia-
-    sourced issue, plus every linkable `collected_issues` entry."""
+    covers — its own source_id if it's a SINGLE-ISSUE
+    Wookieepedia-sourced comic, plus every linkable
+    `collected_issues` entry that we recognise as a real issue
+    article.
+
+    `known_issues` is the union of every series'
+    `expected_issues` — our ground-truth of "what's an actual
+    issue article on Wookieepedia". Filtering against it strips
+    out collected-content noise like short-story titles ("Old
+    Wounds", "The Taris Holofeed: Prime Edition") that appear in
+    omnibus/TPB contents alongside the issues but aren't issue
+    articles themselves. Without this filter, two omnibuses that
+    both list a short story by name would show up as a "duplicate"
+    even though there's no real issue-level overlap to act on.
+
+    TPB / omnibus Comics don't contribute their `source_id`
+    because that's the COLLECTION's article title, not an issue.
+    """
     coverage: set[str] = set()
-    if comic.source == "wookieepedia" and comic.source_id:
+    fmt = (comic.format or "").lower()
+    if (
+        comic.source == "wookieepedia"
+        and comic.source_id
+        and fmt == "single issue"
+        and comic.source_id in known_issues
+    ):
         coverage.add(comic.source_id)
     for entry in parse_entries(comic.collected_issues):
         if not entry.linkable:
             continue
-        coverage.add(entry.article_id or entry.text)
+        article = entry.article_id or entry.text
+        if article in known_issues:
+            coverage.add(article)
     return coverage
 
 
@@ -133,17 +157,22 @@ def build_duplicate_index(
     intersection of expected_issues sets.
     """
     # Pre-build issue → [series] index from expected_issues lists.
+    # `known_issues` doubles as the "real issue article" filter for
+    # comic coverage so we don't count short-story titles or other
+    # collected-content noise as duplicates.
     series_by_issue: dict[str, list[Series]] = defaultdict(list)
+    known_issues: set[str] = set()
     for s in series:
         for line in (s.expected_issues or "").splitlines():
             line = line.strip()
             if line:
                 series_by_issue[line].append(s)
+                known_issues.add(line)
 
     # Walk comics, build the reverse index.
     issue_to_owners: dict[str, list[DuplicateOwner]] = defaultdict(list)
     for comic in comics:
-        coverage = _comic_coverage(comic)
+        coverage = _comic_coverage(comic, known_issues)
         if not coverage:
             continue
         owner = DuplicateOwner(

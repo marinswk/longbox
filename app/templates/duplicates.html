@@ -41,28 +41,47 @@
   {% endif %}
 </section>
 
-{# Filter / sort controls. Three quick-chip presets for the most-
-   common views, plus a disclosure with the full controls. #}
+{# Filter / sort controls. Two SEPARATE forms — chip presets in
+   their own form so each chip click submits ONLY its own `mix`
+   value, and the disclosure form carries the rest of the params.
+   Combining them into one form puts both `mix=X` (chip) AND
+   `mix=Y` (hidden) in the URL — FastAPI keeps only one and the
+   chip click silently fails to apply. #}
 <section class="panel mt-4 rounded-3xl p-4">
-  <form method="get" action="/duplicates" class="flex flex-wrap items-center gap-2 text-xs">
+  <div class="flex flex-wrap items-center gap-2 text-xs">
     {% set mix_opts = [
       ('all',                      'All duplicates'),
       ('singles_and_collection',   'Singles + collection'),
       ('collections_only',         'Only in collections'),
     ] %}
-    {% for v, label in mix_opts %}
-      <button type="submit" name="mix" value="{{ v }}"
-              class="rounded-full border-2 border-black px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000]
-                     {% if selected.mix == v %}bg-crawl{% else %}bg-white hover:bg-paper{% endif %}">
-        {{ label }}
-      </button>
-    {% endfor %}
+    {# Quick-chip preset form. Carries the OTHER selected params as
+       hidden fields so changing the mix preserves sort / group /
+       min_copies / series. Each chip is its own submit button with
+       its own `mix=X` value — no hidden mix here, so only the
+       clicked chip's value goes into the URL. #}
+    <form method="get" action="/duplicates" class="contents">
+      <input type="hidden" name="sort" value="{{ selected.sort }}" />
+      <input type="hidden" name="group" value="{{ selected.group }}" />
+      <input type="hidden" name="min_copies" value="{{ selected.min_copies }}" />
+      {% if selected.series %}<input type="hidden" name="series" value="{{ selected.series }}" />{% endif %}
+      {% for v, label in mix_opts %}
+        <button type="submit" name="mix" value="{{ v }}"
+                class="rounded-full border-2 border-black px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000]
+                       {% if selected.mix == v %}bg-crawl{% else %}bg-white hover:bg-paper{% endif %}">
+          {{ label }}
+        </button>
+      {% endfor %}
+    </form>
 
+    {# Disclosure form for the rest of the filters. Carries the
+       current `mix` as a hidden field so opening "More filters"
+       and clicking Apply preserves the active preset. #}
     <details class="ml-auto relative">
       <summary class="cursor-pointer rounded-md border-2 border-black bg-white px-2 py-1 font-semibold shadow-[2px_2px_0_0_#000]">
         More filters
       </summary>
-      <div class="absolute right-0 z-10 mt-2 w-72 rounded-xl border-2 border-black bg-paper p-3 shadow-[3px_3px_0_0_#000]">
+      <form method="get" action="/duplicates"
+            class="absolute right-0 z-10 mt-2 w-72 rounded-xl border-2 border-black bg-paper p-3 shadow-[3px_3px_0_0_#000]">
         <input type="hidden" name="mix" value="{{ selected.mix }}" />
         <label class="block">
           <span class="text-[10px] font-semibold uppercase">Sort by</span>
@@ -107,9 +126,9 @@
             Reset
           </a>
         </div>
-      </div>
+      </form>
     </details>
-  </form>
+  </div>
 
   {% if selected.series or selected.min_copies != 2 or selected.sort != 'count_desc' or selected.group != 'series' %}
   <p class="mt-2 text-[11px] text-gray-600">

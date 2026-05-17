@@ -48,6 +48,14 @@ def _set_fields(comic_id: int, **fields) -> None:
 # ──────────────────────  unit tests for the index builder  ─────────
 
 
+def _foo_series() -> Series:
+    """Series with the test issue list — required as ground-truth
+    for the duplicates index's `known_issues` filter."""
+    return Series(
+        id=99, name="Foo", expected_issues="Foo 1\nFoo 2\nFoo 3",
+    )
+
+
 def test_build_duplicate_index_finds_issue_in_singles_and_tpb():
     """A single-issue Comic AND a TPB whose collected_issues
     contains that issue should produce one duplicate row with two
@@ -63,11 +71,32 @@ def test_build_duplicate_index_finds_issue_in_singles_and_tpb():
         format="trade paperback",
         collected_issues="Foo 1\nFoo 2\nFoo 3",
     )
-    rows = build_duplicate_index([single, tpb], [], min_copies=2)
+    rows = build_duplicate_index([single, tpb], [_foo_series()], min_copies=2)
     titles = {r.issue_title for r in rows}
     # Only "Foo 1" appears in both. Foo 2 and Foo 3 are TPB-only.
     assert titles == {"Foo 1"}
     assert rows[0].count == 2
+
+
+def test_build_duplicate_index_filters_out_noise_not_in_any_series():
+    """Short-story titles like 'Old Wounds' that appear in two
+    omnibus contents but aren't real issue articles should NOT
+    surface as duplicates — they aren't in any series'
+    expected_issues so the `known_issues` ground-truth set rejects
+    them."""
+    a = Comic(
+        id=1, title="A TPB", format="trade paperback",
+        collected_issues="Foo 1\nOld Wounds\nThe Taris Holofeed",
+    )
+    b = Comic(
+        id=2, title="B TPB", format="trade paperback",
+        collected_issues="Foo 1\nOld Wounds\nThe Taris Holofeed",
+    )
+    rows = build_duplicate_index([a, b], [_foo_series()], min_copies=2)
+    titles = {r.issue_title for r in rows}
+    # Foo 1 IS in Foo series' expected_issues → real duplicate.
+    # Old Wounds / Taris Holofeed are not → filtered.
+    assert titles == {"Foo 1"}
 
 
 def test_build_duplicate_index_skips_under_threshold():
@@ -80,7 +109,10 @@ def test_build_duplicate_index_skips_under_threshold():
         id=2, title="B", source="wookieepedia", source_id="Y 1",
         format="single issue",
     )
-    rows = build_duplicate_index([a, b], [], min_copies=2)
+    rows = build_duplicate_index([a, b], [
+        Series(id=1, name="X", expected_issues="X 1"),
+        Series(id=2, name="Y", expected_issues="Y 1"),
+    ], min_copies=2)
     assert rows == []
 
 
@@ -98,11 +130,13 @@ def test_build_duplicate_index_min_copies_filter():
         id=3, title="TPB B", format="trade paperback",
         collected_issues="X 2\nX 3",
     )
+    x_series = Series(id=1, name="X",
+                      expected_issues="X 1\nX 2\nX 3")
     # X 1 has 2 owners, X 2 has 2 owners. Both filtered out with min=3.
-    rows = build_duplicate_index([single, tpb_a, tpb_b], [], min_copies=3)
+    rows = build_duplicate_index([single, tpb_a, tpb_b], [x_series], min_copies=3)
     assert rows == []
     # Lower the threshold: 2 rows surface.
-    rows = build_duplicate_index([single, tpb_a, tpb_b], [], min_copies=2)
+    rows = build_duplicate_index([single, tpb_a, tpb_b], [x_series], min_copies=2)
     assert {r.issue_title for r in rows} == {"X 1", "X 2"}
 
 
@@ -128,12 +162,19 @@ def test_build_duplicate_index_derives_series_from_smallest_match():
 
 
 def test_build_duplicate_index_falls_back_to_trailing_number_strip():
-    """No series rows → derive series from the issue title itself."""
+    """When a series row exists for grouping fallback but only one
+    Series covers the issue, derive_series picks that series'
+    name; without any matching series, falls back to trailing-
+    number-strip."""
+    # Only one series exists, listing the dup issue. Used as the
+    # ground-truth filter AND the derived series name.
+    bare = Series(id=1, name="Random Series",
+                  expected_issues="Random Series 7\nRandom Series 8")
     a = Comic(id=1, title="A", source="wookieepedia",
               source_id="Random Series 7", format="single issue")
     b = Comic(id=2, title="B", format="trade paperback",
               collected_issues="Random Series 7\nOther 1")
-    rows = build_duplicate_index([a, b], [], min_copies=2)
+    rows = build_duplicate_index([a, b], [bare], min_copies=2)
     assert rows[0].derived_series == "Random Series"
 
 
@@ -146,9 +187,13 @@ def test_apply_filters_singles_and_collection_mix():
                  collected_issues="X 1\nY 1")
     tpb2 = Comic(id=3, title="T2", format="trade paperback",
                  collected_issues="X 1\nY 1")
+    s = [
+        Series(id=1, name="X", expected_issues="X 1"),
+        Series(id=2, name="Y", expected_issues="Y 1"),
+    ]
     # X 1 has single + 2 tpbs → singles_and_collection ✓
     # Y 1 has 2 tpbs → collections_only
-    rows = build_duplicate_index([single, tpb1, tpb2], [], min_copies=2)
+    rows = build_duplicate_index([single, tpb1, tpb2], s, min_copies=2)
     filtered = apply_filters_and_sort(rows, mix="singles_and_collection")
     assert {r.issue_title for r in filtered} == {"X 1"}
     filtered = apply_filters_and_sort(rows, mix="collections_only")
@@ -156,13 +201,17 @@ def test_apply_filters_singles_and_collection_mix():
 
 
 def test_apply_filters_series():
+    s = [
+        Series(id=1, name="Alpha", expected_issues="Alpha 1"),
+        Series(id=2, name="Beta",  expected_issues="Beta 1"),
+    ]
     a = Comic(id=1, title="A", source="wookieepedia",
               source_id="Alpha 1", format="single issue")
     b = Comic(id=2, title="B", format="trade paperback",
               collected_issues="Alpha 1\nBeta 1")
     c = Comic(id=3, title="C", source="wookieepedia",
               source_id="Beta 1", format="single issue")
-    rows = build_duplicate_index([a, b, c], [], min_copies=2)
+    rows = build_duplicate_index([a, b, c], s, min_copies=2)
     filtered = apply_filters_and_sort(rows, series="Alpha")
     assert {r.issue_title for r in filtered} == {"Alpha 1"}
 
@@ -181,7 +230,11 @@ def test_apply_filters_sort_count_desc():
     # so add another. Bump X 1 to 4 owners by adding tpb_e.
     e = Comic(id=5, title="E", format="trade paperback",
               collected_issues="X 1")
-    rows = build_duplicate_index([a, b, c, d, e], [], min_copies=2)
+    s = [
+        Series(id=1, name="X", expected_issues="X 1"),
+        Series(id=2, name="Y", expected_issues="Y 1"),
+    ]
+    rows = build_duplicate_index([a, b, c, d, e], s, min_copies=2)
     sorted_ = apply_filters_and_sort(rows, sort="count_desc")
     assert sorted_[0].issue_title == "X 1"
 
@@ -191,7 +244,9 @@ def test_apply_filters_sort_count_desc():
 
 def test_duplicates_page_renders_issue_level_index():
     """End-to-end: save a single + a TPB that share an issue,
-    /duplicates should render the issue as a duplicate row."""
+    /duplicates should render the issue as a duplicate row. The
+    series ground-truth must include the issue title so the
+    `known_issues` filter doesn't reject it."""
     with _client() as client:
         single_id = _save(client, title="Foo 1 single",
                           isbn_13="9783000010001",
@@ -205,17 +260,25 @@ def test_duplicates_page_renders_issue_level_index():
                        publisher="P")
         _set_fields(tpb_id, format="trade paperback",
                     collected_issues="Foo 1\nFoo 2\nFoo 3")
+        # Stamp expected_issues on the Foo singles series so the
+        # filter treats "Foo 1" as a real issue article.
+        async def _seed_expected():
+            async with SessionLocal() as s:
+                ser = (await s.exec(
+                    select(Series).where(Series.name == "Foo (comic series)")
+                )).first()
+                ser.expected_issues = "Foo 1\nFoo 2\nFoo 3"
+                s.add(ser)
+                await s.commit()
+        asyncio.run(_seed_expected())
 
         r = client.get("/duplicates")
         assert r.status_code == 200
         body = r.text
         assert "DUPLICATES" in body
-        # Issue title visible.
         assert "Foo 1" in body
-        # Both owning comics visible.
         assert "Foo 1 single" in body
         assert "Foo TPB" in body
-        # Count badge.
         assert "×2" in body
 
 
@@ -242,6 +305,17 @@ def test_duplicates_filter_singles_and_collection():
                      series="SC Series", publisher="P")
         _set_fields(b_id, format="trade paperback",
                     collected_issues="SC Issue 1\nSC Issue 2")
+        # Mark these as real issues via the SC Series' expected_issues
+        # so they pass the known-issues filter.
+        async def _seed():
+            async with SessionLocal() as s:
+                ser = (await s.exec(
+                    select(Series).where(Series.name == "SC Series")
+                )).first()
+                ser.expected_issues = "SC Issue 1\nSC Issue 2"
+                s.add(ser)
+                await s.commit()
+        asyncio.run(_seed())
 
         r = client.get("/duplicates",
                        params={"mix": "singles_and_collection"})
