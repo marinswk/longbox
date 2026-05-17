@@ -117,6 +117,33 @@
 </section>
 {% endif %}
 
+{% if canceled_titles %}
+{# Canceled issues — listed but not counted against the progress
+   denominator. The wiki flags these in the publication-date cell
+   ("Cancelled (planned for ...)"). Star Wars 3-D issues 4-7 are
+   the canonical example. #}
+<section class="panel mt-6 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide text-gray-600">CANCELED</h3>
+  <p class="mt-1 text-xs text-gray-500">
+    Issues the publisher planned but never released. Not counted
+    against this series' completion progress.
+  </p>
+  <ol class="mt-3 space-y-1 text-sm">
+    {% for t in canceled_titles %}
+      <li class="flex items-center gap-3 rounded border-2 border-black bg-gray-50 px-3 py-1.5">
+        <span class="shrink-0 text-base text-gray-400">⊘</span>
+        <span class="min-w-0 flex-1 truncate text-gray-600 line-through" title="{{ t }}">
+          {{ t }}
+        </span>
+        <span class="shrink-0 rounded-full bg-gray-300 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+          canceled
+        </span>
+      </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
 {% if extras %}
 <section class="panel mt-6 rounded-3xl p-6">
   <h3 class="font-display text-2xl tracking-wide">OTHER OWNED</h3>

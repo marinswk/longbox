@@ -41,7 +41,7 @@ from app.db import get_session
 from app.models import Comic, Publisher, Series
 from app.services import comicvine, metron, wookieepedia
 from app.services.errors import UpstreamRateLimit
-from app.services.series_progress import compute_progress, match_owned, parse_expected
+from app.services.series_progress import compute_progress, match_owned, parse_canceled, parse_expected
 
 # Map of source-name -> async fetcher that takes a source_id (article
 # title for Wookieepedia, numeric volume/series id for CV/Metron) and
@@ -136,6 +136,7 @@ async def _load(session: AsyncSession, series_id: int) -> dict:
             owned_comics.append(c)
             seen_ids.add(c.id)
 
+    canceled = parse_canceled(series)
     return {
         "series": series,
         "publisher": publisher,
@@ -143,6 +144,7 @@ async def _load(session: AsyncSession, series_id: int) -> dict:
         "expected_total": len(expected),
         "owned_count": owned,
         "missing_count": max(0, len(expected) - owned),
+        "canceled_titles": canceled,
         "extras": extras,
         "owned_comics": owned_comics,
         "progress_pct": progress_pct,
@@ -265,6 +267,15 @@ async def series_refresh(
     series.source = src
     series.source_id = sid
     series.expected_issues = "\n".join(issues)
+    # Wookieepedia marks unpublished issues with "Cancelled" in the
+    # publication-date cell — capture those so they don't drag the
+    # series' completion-progress denominator below 100% forever.
+    if src == "wookieepedia":
+        try:
+            canceled = await wookieepedia.get_series_canceled_issues(sid)
+        except Exception:
+            canceled = []
+        series.canceled_issues = "\n".join(canceled) if canceled else None
     session.add(series)
     await session.commit()
 
@@ -510,6 +521,14 @@ async def series_auto_link(
     series.source = src
     series.source_id = sid
     series.expected_issues = "\n".join(issues)
+    # Pull the canceled-issues subset too so the progress bar
+    # ignores planned-but-unpublished issues.
+    if src == "wookieepedia":
+        try:
+            canceled = await wookieepedia.get_series_canceled_issues(sid)
+        except Exception:
+            canceled = []
+        series.canceled_issues = "\n".join(canceled) if canceled else None
     session.add(series)
     await session.commit()
 

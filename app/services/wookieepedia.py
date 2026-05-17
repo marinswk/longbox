@@ -548,6 +548,44 @@ _TABLE_ROW_ISSUE_RX = re.compile(
 )
 
 
+# Detect "Cancelled" / "Canceled" markers in a table row's prose.
+# Wookieepedia uses the British spelling "Cancelled" but we accept
+# both. Plain word-boundary match is enough — table cells with a
+# wikilinked publication-date article (e.g. "[[1989]]") still have
+# the literal word "Cancelled" alongside.
+_CANCELED_MARKER = re.compile(r"\bCancell?ed\b", re.IGNORECASE)
+
+
+def _extract_table_row_canceled_issues(body: str) -> list[str]:
+    """Return the article titles of every prettytable issue row whose
+    publication-date cell contains a "Cancelled" / "Canceled" marker.
+    Used to populate Series.canceled_issues so missing-issues progress
+    doesn't count un-published planned issues against the user.
+    Returns first-seen-order, deduplicated."""
+    out: list[str] = []
+    seen: set[str] = set()
+    # Split on row separators (`|-`). The first chunk is the table
+    # header; later chunks each represent one row. The split keeps
+    # cells joined with `||` inside each chunk.
+    for chunk in re.split(r"\n\s*\|-", body):
+        if not _CANCELED_MARKER.search(chunk):
+            continue
+        # Capture the article title from the wikilinked cell — same
+        # shape as _TABLE_ROW_ISSUE_RX but applied per-row.
+        m = _TABLE_ROW_ISSUE_RX.search(chunk)
+        if not m:
+            continue
+        title = m.group(1).strip()
+        low = title.lower()
+        if low.startswith(("file:", "image:", "category:")):
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(title)
+    return out
+
+
 def _extract_table_row_issues(body: str) -> list[str]:
     """Walk an Issues section body for prettytable rows where the
     first cell is an issue number and the next cell is a wikilinked
@@ -1099,6 +1137,36 @@ async def search_text(query: str) -> list[LookupCandidate]:
 
 async def get_article(title: str) -> Optional[LookupCandidate]:
     return await _candidate_from_title(title)
+
+
+async def get_series_canceled_issues(article_title: str) -> list[str]:
+    """Return the article titles of issues flagged as Cancelled /
+    Canceled in this series article's Issues section. Used to mark
+    a subset of `expected_issues` as not-published so the missing-
+    issues progress bar doesn't count them against the user.
+    Empty list when no canceled-row markers are found."""
+    # Strip optional `#section` anchor — same convention as
+    # get_series_issues.
+    section_anchor: Optional[str] = None
+    if "#" in article_title:
+        article_title, section_anchor = article_title.split("#", 1)
+    parsed = await _parse_page(article_title)
+    if not parsed:
+        return []
+    wikitext = (parsed.get("wikitext") or {}).get("*") or ""
+    body = wikitext
+    if section_anchor:
+        section_re = re.compile(
+            r"^={2,4}\s*" + re.escape(section_anchor) + r"\s*={2,4}\s*$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        scoped = _section_body(wikitext, section_re)
+        if scoped is not None:
+            body = scoped
+    issues_section = _section_body(body, _SERIES_ISSUES_HEADERS)
+    if issues_section is not None:
+        body = issues_section
+    return _extract_table_row_canceled_issues(body)
 
 
 async def get_series_issues(article_title: str) -> list[str]:

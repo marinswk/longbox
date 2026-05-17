@@ -71,7 +71,25 @@ def _collected_titles(comic: Comic) -> set[str]:
 
 
 def parse_expected(series: Series) -> list[str]:
+    """Return the expected issue list MINUS any titles flagged as
+    canceled. Used by both the missing-issues detector + the
+    progress denominator. Canceled issues are tracked separately
+    on `Series.canceled_issues` (a sub-list of `expected_issues`)
+    so they can still be SHOWN — just not counted against the
+    user's completion percentage."""
     raw = series.expected_issues or ""
+    cancelled_raw = series.canceled_issues or ""
+    cancelled = {line.strip() for line in cancelled_raw.split("\n") if line.strip()}
+    return [
+        line.strip() for line in raw.split("\n")
+        if line.strip() and line.strip() not in cancelled
+    ]
+
+
+def parse_canceled(series: Series) -> list[str]:
+    """Return the series' canceled-issue titles in the order they
+    appear in `Series.canceled_issues`."""
+    raw = series.canceled_issues or ""
     return [line.strip() for line in raw.split("\n") if line.strip()]
 
 

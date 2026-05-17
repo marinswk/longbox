@@ -350,17 +350,29 @@ async def _attach_inferred_series(comic_id: int) -> None:
         return
 
     # Pre-fetch expected_issues per canonical (cached after first
-    # hit, same Semaphore-bounded parallelism).
+    # hit, same Semaphore-bounded parallelism). Also pull the
+    # canceled-issues subset so newly-created Series rows get the
+    # correct progress denominator from the start.
     async def _series_issues(article_id):
         async with sem:
             try:
                 return article_id, await wookieepedia.get_series_issues(article_id)
             except Exception:
                 return article_id, []
+    async def _series_canceled(article_id):
+        async with sem:
+            try:
+                return article_id, await wookieepedia.get_series_canceled_issues(article_id)
+            except Exception:
+                return article_id, []
     issue_results = await _asyncio.gather(
         *( _series_issues(info["article_id"]) for info in by_canon.values() )
     )
+    canceled_results = await _asyncio.gather(
+        *( _series_canceled(info["article_id"]) for info in by_canon.values() )
+    )
     issues_by_article: dict[str, list[str]] = dict(issue_results)
+    canceled_by_article: dict[str, list[str]] = dict(canceled_results)
 
     # Drop "subsumed" canonicals: when sub-series A's issue list is a
     # strict subset of umbrella B's, the user already gets full
@@ -400,13 +412,14 @@ async def _attach_inferred_series(comic_id: int) -> None:
             canonical_name,
             info["article_id"],
             issues_by_article.get(info["article_id"], []),
+            canceled_by_article.get(info["article_id"], []),
         ))
 
     # PHASE 3 — fresh DB session for the writes. Now the cache reads
     # / writes from Phase 2 are done; we can hold this session as
     # long as we like.
     async with SessionLocal() as session:
-        for group, canonical_name, canonical_article, issues in resolved:
+        for group, canonical_name, canonical_article, issues, canceled in resolved:
             # Look up by canonical name first. If absent AND the
             # canonical differs from the guess, also check the guess —
             # an earlier name-only inference may have created a row
@@ -486,6 +499,7 @@ async def _attach_inferred_series(comic_id: int) -> None:
                     source="wookieepedia" if canonical_article else None,
                     source_id=canonical_article,
                     expected_issues="\n".join(issues) if issues else None,
+                    canceled_issues="\n".join(canceled) if canceled else None,
                 )
                 session.add(existing)
                 await session.flush()
@@ -502,6 +516,9 @@ async def _attach_inferred_series(comic_id: int) -> None:
                 # the user may have edited it manually.
                 if issues and not existing.expected_issues:
                     existing.expected_issues = "\n".join(issues)
+                    dirty = True
+                if canceled and not existing.canceled_issues:
+                    existing.canceled_issues = "\n".join(canceled)
                     dirty = True
                 if dirty:
                     session.add(existing)
@@ -612,6 +629,15 @@ async def _enrich_series_from_candidate(
         # Don't clobber a manually-entered expected_issues list.
         if not series.expected_issues:
             series.expected_issues = "\n".join(issues)
+        # Pull the canceled-issues subset too (Wookieepedia only).
+        # Same conservatism: keep an existing canceled_issues list.
+        if source == "wookieepedia" and not series.canceled_issues:
+            try:
+                canceled = await wookieepedia.get_series_canceled_issues(source_id)
+            except Exception:
+                canceled = []
+            if canceled:
+                series.canceled_issues = "\n".join(canceled)
         session.add(series)
         await session.commit()
 

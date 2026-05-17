@@ -32,6 +32,14 @@ class Series(SQLModel, table=True):
     # against the comics owned for this series.
     expected_issues: Optional[str] = None
 
+    # Newline-joined list of canceled issue article titles — issues that
+    # the wiki lists with "Cancelled" / "Canceled" status (e.g. Star
+    # Wars 3-D issues 4-7 were planned but never published). Kept as
+    # a SUBSET of expected_issues so the series detail page can render
+    # them separately AND progress calculation can subtract them from
+    # the denominator.
+    canceled_issues: Optional[str] = None
+
 
 class Comic(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
