@@ -33,11 +33,49 @@ _COLLECTING_PREFIX = re.compile(r"^\s*collect(?:s|ing)\b\s*:?\s*", re.IGNORECASE
 # Anything in here disqualifies an entry from being an article-title link.
 _NON_TITLE_CHARS = re.compile(r"[,;#]")
 
-# "Story title (Book Name N)" combined StoryCite shape — inner must
-# end with a number to qualify as an issue reference. Anchored to
-# end-of-string so legit titles with mid-string parens (e.g.
-# "Star Wars (1977) 1") don't accidentally match.
-_COMBINED_PAREN_RX = re.compile(r"^(.+?)\s+\(([^()]+\s+\d+[A-Za-z]?)\)$")
+# The book half of a combined StoryCite entry must end with a
+# space-separated issue number ("Revelations (2023) 1", "Star Wars
+# Tales 16"). A trailing letter suffix ("12A") is allowed.
+_BOOK_ENDS_WITH_ISSUE_NUM = re.compile(r"\S\s+\d+[A-Za-z]?$")
+
+
+def _split_combined_paren(text: str) -> Optional[tuple[str, str]]:
+    """Detect a `"<story> (<book>)"` combined StoryCite entry and
+    return `(story, book)`, or `None` when `text` isn't one.
+
+    The book half is the LAST balanced parenthetical group, found by
+    walking back from the final `)` and counting paren depth. This is
+    what lets a book half that ITSELF contains parens be extracted —
+    e.g. `"Tool of the Empire (Revelations (2023) 1)"` yields
+    `("Tool of the Empire", "Revelations (2023) 1")`, where a plain
+    `[^()]+` regex would choke on the nested `(2023)` year tag.
+
+    The book must end with a space-separated issue number so plain
+    parenthetical titles like `"Star Wars (1977)"` (no trailing
+    number) aren't mistaken for combined entries.
+    """
+    if not text.endswith(")"):
+        return None
+    depth = 0
+    open_idx = -1
+    for i in range(len(text) - 1, -1, -1):
+        ch = text[i]
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            depth -= 1
+            if depth == 0:
+                open_idx = i
+                break
+    if open_idx <= 0:
+        return None
+    story = text[:open_idx].strip()
+    book = text[open_idx + 1:-1].strip()
+    if not story or not book:
+        return None
+    if not _BOOK_ENDS_WITH_ISSUE_NUM.search(book):
+        return None
+    return story, book
 
 
 @dataclass
@@ -169,14 +207,11 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
         #   "COLLECTING: Star Wars: Revelations (2023) 1 (Story 6)"
         # would be mistaken for a combined entry just because it
         # happens to end with parens-wrapped digits.
-        m = _COMBINED_PAREN_RX.match(text)
-        if m:
-            story_part = m.group(1).strip()
-            inner = m.group(2).strip()
+        combined = _split_combined_paren(text)
+        if combined:
+            story_part, inner = combined
             if (
-                inner
-                and _looks_like_article_title(inner)
-                and story_part
+                _looks_like_article_title(inner)
                 and _looks_like_article_title(story_part)
             ):
                 out.append(CollectedEntry(

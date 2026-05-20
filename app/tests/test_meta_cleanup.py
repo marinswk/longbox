@@ -74,6 +74,51 @@ def test_parse_entries_strips_collecting_prefix_and_marks_non_linkable():
     assert e.text == raw
 
 
+def test_parse_entries_combined_storycite_sets_article_id():
+    """`"<story> (<book N>)"` combined StoryCite entries keep the full
+    display text but expose the book half via `article_id` so callers
+    link / resolve straight to the real issue article."""
+    out = parse_entries(
+        "The Curse (comic story) (Free Comic Book Day 2024: Star Wars 1)"
+    )
+    assert len(out) == 1
+    e = out[0]
+    assert e.linkable is True
+    assert e.text == (
+        "The Curse (comic story) (Free Comic Book Day 2024: Star Wars 1)"
+    )
+    assert e.article_id == "Free Comic Book Day 2024: Star Wars 1"
+
+
+def test_parse_entries_combined_storycite_book_with_nested_year_parens():
+    """The book half can itself carry a `(YYYY)` year disambiguator —
+    e.g. "Revelations (2023) 1". The combined-entry splitter walks
+    balanced parens from the right so the nested year tag doesn't
+    break article_id extraction."""
+    out = parse_entries(
+        "Tool of the Empire (Revelations (2023) 1)\n"
+        "Tall Tales (Revelations) (Revelations (2023) 1)"
+    )
+    assert [e.article_id for e in out] == [
+        "Revelations (2023) 1",
+        "Revelations (2023) 1",
+    ]
+    assert all(e.linkable for e in out)
+    # Full descriptive text is preserved for display.
+    assert out[0].text == "Tool of the Empire (Revelations (2023) 1)"
+
+
+def test_parse_entries_plain_year_disambiguated_issue_not_combined():
+    """A plain issue title ending in a number ("Star Wars (1977) 1")
+    must NOT be mistaken for a combined entry — it has no trailing
+    paren group, so article_id stays None."""
+    out = parse_entries("Star Wars (1977) 1")
+    assert len(out) == 1
+    assert out[0].linkable is True
+    assert out[0].article_id is None
+    assert out[0].text == "Star Wars (1977) 1"
+
+
 def test_parse_entries_marks_comma_lists_non_linkable():
     out = parse_entries("Knights 1, Knights 2, Knights 3")
     assert len(out) == 1

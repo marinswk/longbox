@@ -7,7 +7,12 @@ import httpx
 import respx
 
 from app.services import wookieepedia
-from app.services.wookieepedia import _clean, _find_infobox, _parse_date
+from app.services.wookieepedia import (
+    _clean,
+    _extract_contents_section,
+    _find_infobox,
+    _parse_date,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +66,55 @@ def test_find_infobox_picks_comicbook_template():
     assert fields["series"] == "Star Wars: Jedi Knights"
     assert fields["issue"] == "1"
     assert fields["pages"] == "26"
+
+
+def test_extract_contents_section_parses_bullet_list():
+    wt = (
+        "==Contents==\n"
+        "*''[[Darth Vader (2020) 42|''Darth Vader'' (2020) 42]]''\n"
+        "*''[[Darth Vader (2020) 43|''Darth Vader'' (2020) 43]]''\n"
+        "==Appearances==\n"
+    )
+    assert _extract_contents_section(wt) == [
+        "Darth Vader (2020) 42",
+        "Darth Vader (2020) 43",
+    ]
+
+
+def test_extract_contents_section_falls_back_to_gallery():
+    """Newer Marvel epic-style volumes list their collected issues as a
+    `<gallery>` block inside `==Contents==` instead of a bullet list —
+    the parser falls back to gallery extraction when no bullets exist."""
+    wt = (
+        "==Contents==\n"
+        "<gallery captionalign=\"center\">\n"
+        "File:DarthVader2020-23-textless.jpg|[[Darth Vader (2020) 23|"
+        "''Darth Vader'' (2020) 23]]\n"
+        "File:DarthVader2020-24-Textless.png|[[Darth Vader (2020) 24|"
+        "''Darth Vader'' (2020) 24]]\n"
+        "</gallery>\n"
+        "==Appearances==\n"
+    )
+    assert _extract_contents_section(wt) == [
+        "Darth Vader (2020) 23",
+        "Darth Vader (2020) 24",
+    ]
+
+
+def test_extract_contents_section_gallery_scoped_to_section():
+    """Gallery fallback is scoped to the ==Contents== body — an
+    unrelated cover gallery elsewhere on the page must not leak in."""
+    wt = (
+        "==Contents==\n"
+        "<gallery>\n"
+        "File:a.jpg|[[Darth Vader (2020) 23|Vader 23]]\n"
+        "</gallery>\n"
+        "==Cover gallery==\n"
+        "<gallery>\n"
+        "File:b.jpg|[[Some Other Comic 99|Other 99]]\n"
+        "</gallery>\n"
+    )
+    assert _extract_contents_section(wt) == ["Darth Vader (2020) 23"]
 
 
 def test_find_infobox_returns_none_for_pages_without_one():

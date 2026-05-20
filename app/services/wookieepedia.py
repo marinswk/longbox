@@ -935,8 +935,21 @@ def _extract_contents_section(wikitext: str) -> list[str]:
     article. Each bullet typically wikilinks to a single-issue article;
     `{{StoryCite|story=…}}` templates are recognised so short stories
     don't get silently dropped.
+
+    Newer Marvel epic-style volumes (e.g. *Darth Vader Vol. 5 — The
+    Shadow's Shadow*) list their collected issues as a `<gallery>`
+    block inside `==Contents==` instead of a bullet list. When the
+    bullet parser comes up empty we fall back to gallery extraction,
+    scoped to the section body so unrelated cover galleries elsewhere
+    on the page can't leak in.
     """
-    return _extract_section_bullets(wikitext, _CONTENTS_HEADER)
+    items = _extract_section_bullets(wikitext, _CONTENTS_HEADER)
+    if items:
+        return items
+    body = _section_body(wikitext, _CONTENTS_HEADER)
+    if body:
+        return _extract_gallery_links(body)
+    return []
 
 
 # TPB-series articles like Epic Collection, Star Wars Omnibus, and
