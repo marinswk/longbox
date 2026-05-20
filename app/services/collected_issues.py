@@ -229,3 +229,35 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
         else:
             out.append(CollectedEntry(text=head, linkable=True))
     return out
+
+
+def coverage_titles(raw: str | None) -> set[str]:
+    """Every issue / story title a `collected_issues` blob covers, for
+    series-progress and duplicate matching.
+
+    A plain entry contributes just its own title. A combined StoryCite
+    entry — `"<story> (<book N>)"` — contributes THREE keys:
+
+      * the story title   ("Tool of the Empire")
+      * the book title    ("Revelations (2023) 1")
+      * the verbatim line ("Tool of the Empire (Revelations (2023) 1)")
+
+    The story key is what attributes an anthology one-shot's contents
+    to each contributing series. Wookieepedia lists the story
+    ("Tool of the Empire") as an issue of *Darth Vader (2020)* even
+    though it was physically published inside the multi-story one-shot
+    *Revelations (2023) 1* — so a trade that collects the story has to
+    match the series on the story name, not on the host book.
+    """
+    out: set[str] = set()
+    for e in parse_entries(raw):
+        if not e.linkable:
+            continue
+        out.add(e.text)
+        if e.article_id:
+            # Combined entry: article_id is the book half.
+            out.add(e.article_id)
+            combined = _split_combined_paren(e.text)
+            if combined:
+                out.add(combined[0])  # story half
+    return out

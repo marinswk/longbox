@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from app.models import Comic, Series
-from app.services.collected_issues import parse_entries
+from app.services.collected_issues import coverage_titles
 
 
 @dataclass
@@ -102,10 +102,11 @@ def _comic_coverage(comic: Comic, known_issues: set[str]) -> set[str]:
         and comic.source_id in known_issues
     ):
         coverage.add(comic.source_id)
-    for entry in parse_entries(comic.collected_issues):
-        if not entry.linkable:
-            continue
-        article = entry.article_id or entry.text
+    # `coverage_titles` yields the story title, the host-book title and
+    # the verbatim line for combined StoryCite entries — so a trade
+    # that reprints an anthology one-shot's story is recognised by the
+    # story name (the key Wookieepedia files under each series).
+    for article in coverage_titles(comic.collected_issues):
         if article in known_issues:
             coverage.add(article)
     return coverage

@@ -28,7 +28,7 @@ from sqlmodel import select
 from app.db import SessionLocal
 from app.main import create_app
 from app.models import Comic, Publisher, Series
-from app.services.collected_issues import parse_entries
+from app.services.collected_issues import coverage_titles, parse_entries
 from app.services.fandoms import backfill_strip_multiline_names
 
 
@@ -117,6 +117,27 @@ def test_parse_entries_plain_year_disambiguated_issue_not_combined():
     assert out[0].linkable is True
     assert out[0].article_id is None
     assert out[0].text == "Star Wars (1977) 1"
+
+
+def test_coverage_titles_yields_story_book_and_verbatim_for_combined():
+    """A combined StoryCite entry covers three keys: the story title,
+    the host-book title, and the verbatim line."""
+    titles = coverage_titles("Tool of the Empire (Revelations (2023) 1)")
+    assert titles == {
+        "Tool of the Empire",
+        "Revelations (2023) 1",
+        "Tool of the Empire (Revelations (2023) 1)",
+    }
+
+
+def test_coverage_titles_plain_entries_yield_only_themselves():
+    titles = coverage_titles("Darth Vader (2020) 42\nDarth Vader (2020) 43")
+    assert titles == {"Darth Vader (2020) 42", "Darth Vader (2020) 43"}
+
+
+def test_coverage_titles_skips_non_linkable_prose():
+    assert coverage_titles("COLLECTING: Star Wars 1-50, Vader 1") == set()
+    assert coverage_titles(None) == set()
 
 
 def test_parse_entries_marks_comma_lists_non_linkable():

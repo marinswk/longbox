@@ -50,26 +50,17 @@ def _trailing_number(label: str) -> Optional[str]:
 
 
 def _collected_titles(comic: Comic) -> set[str]:
-    """Return the set of issue-article titles a comic's
-    `collected_issues` blob refers to. For combined "Story (Book)"
-    entries, the BOOK part inside trailing parens is used (that's
-    the real article title); the full line is also included so
-    callers matching against the raw entry text still find it."""
-    import re as _re
-    paren_rx = _re.compile(r"^(.+?)\s+\(([^()]+\s+\d+[A-Za-z]?)\)$")
-    raw = comic.collected_issues or ""
-    out: set[str] = set()
-    for line in raw.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        out.add(line)
-        m = paren_rx.match(line)
-        if m:
-            book_part = m.group(2).strip()
-            if book_part:
-                out.add(book_part)
-    return out
+    """Return the set of issue / story titles a comic's
+    `collected_issues` blob can satisfy.
+
+    Combined "Story (Book)" StoryCite entries contribute the story
+    title, the book title AND the verbatim line — see
+    `coverage_titles`. The story key is what lets a trade that
+    collects an anthology one-shot's story (e.g. "Tool of the
+    Empire", published inside "Revelations (2023) 1") count toward a
+    series that lists the story itself as an issue."""
+    from app.services.collected_issues import coverage_titles
+    return coverage_titles(comic.collected_issues)
 
 
 def parse_expected(series: Series) -> list[str]:

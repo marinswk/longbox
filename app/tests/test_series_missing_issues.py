@@ -683,6 +683,37 @@ def test_trade_collecting_issues_credits_series_progress():
         assert "Test Knights Vol. 1" in page
 
 
+def test_match_owned_credits_anthology_story_from_combined_entry():
+    """A trade that collects an anthology one-shot's story stores the
+    entry as the combined "Story (Book N)" shape. Wookieepedia lists
+    the STORY itself ("Tool of the Empire") as an issue of the series,
+    so the matcher must credit the series on the story name — not just
+    the host book ("Revelations (2023) 1")."""
+    from app.services.series_progress import match_owned
+
+    trade = Comic(
+        title="Darth Vader Vol. 9",
+        collected_issues=(
+            "Tool of the Empire (Revelations (2023) 1)\n"
+            "Darth Vader (2020) 42\n"
+            "The Curse (comic story) (Free Comic Book Day 2024: Star Wars 1)"
+        ),
+    )
+    expected = [
+        "Tool of the Empire",
+        "Darth Vader (2020) 42",
+        "The Curse (comic story)",
+        "Darth Vader (2020) 99",  # not owned
+    ]
+    pairs, owned = match_owned(expected, [trade])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Tool of the Empire"].trade is trade
+    assert by_title["The Curse (comic story)"].trade is trade
+    assert by_title["Darth Vader (2020) 42"].trade is trade
+    assert by_title["Darth Vader (2020) 99"].trade is None
+    assert owned == 3
+
+
 def test_comic_detail_links_to_series_page():
     with _client() as client:
         cid = _save(client, title="Linked Comic", issue_number="1",
