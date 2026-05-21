@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from sqlmodel import select
 
 from app.db import SessionLocal
-from app.models import Comic, Series
+from app.models import Comic, ComicSeries, Series
 from app.services import comicvine, metron, wookieepedia
 
 _log = logging.getLogger("longbox.cleanup")
@@ -62,6 +62,7 @@ class CleanupProgress:
     series_merged: int = 0
     series_pruned: int = 0
     links_pruned: int = 0
+    mislinks_removed: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -287,6 +288,74 @@ async def _merge_subsumed_series() -> int:
     return merged
 
 
+async def _prune_mislinked_series() -> int:
+    """Remove non-primary ComicSeries links a comic has no business in.
+
+    A link is "mis-linked" when the series HAS a known expected-issue
+    list and NONE of the comic's collected issues (or its own
+    source_id) appear in it. Such links are stale artefacts of earlier
+    parser bugs — e.g. the en-dash one-shot title
+    "War of the Bounty Hunters – Jabba the Hutt 1" being mis-split and
+    its "Jabba the Hutt 1" half resolved to the unrelated 1995
+    *Jabba the Hutt* series.
+
+    Conservative on purpose: a series with no expected_issues is left
+    alone (can't judge it), the primary link is never touched, and any
+    real issue/story overlap keeps the link. With whole-library trade
+    matching, dropping a link never hurts progress anyway — it only
+    removes a wrong chip / a wrong entry on the series page.
+    """
+    from app.services.collected_issues import (
+        coverage_titles, strip_disambiguator,
+    )
+    from sqlalchemy import delete as sa_delete
+
+    async with SessionLocal() as session:
+        series_rows = (await session.exec(select(Series))).all()
+        link_rows = (await session.exec(
+            select(ComicSeries).where(ComicSeries.is_primary == False)  # noqa: E712
+        )).all()
+
+    # Judge-able series: those with a non-empty expected list. Index
+    # each title under its disambiguator-stripped form too.
+    expected_by_series: dict[int, set[str]] = {}
+    for s in series_rows:
+        exp: set[str] = set()
+        for ln in (s.expected_issues or "").splitlines():
+            ln = ln.strip()
+            if ln:
+                exp.add(ln)
+                exp.add(strip_disambiguator(ln))
+        if exp:
+            expected_by_series[s.id] = exp
+
+    removed = 0
+    async with SessionLocal() as session:
+        for link in link_rows:
+            exp = expected_by_series.get(link.series_id)
+            if exp is None:
+                continue  # series has no expected list — can't judge
+            comic = await session.get(Comic, link.comic_id)
+            if comic is None or comic.series_id == link.series_id:
+                continue
+            cov = coverage_titles(comic.collected_issues)
+            cov |= {strip_disambiguator(t) for t in cov}
+            if comic.source_id:
+                cov.add(comic.source_id)
+                cov.add(strip_disambiguator(comic.source_id))
+            if cov & exp:
+                continue  # justified — comic really covers this series
+            await session.exec(
+                sa_delete(ComicSeries).where(
+                    ComicSeries.comic_id == link.comic_id,
+                    ComicSeries.series_id == link.series_id,
+                )
+            )
+            removed += 1
+        await session.commit()
+    return removed
+
+
 async def _run() -> None:
     """The cleanup body. Each item is isolated in its own try/except so
     one bad series or comic can't abort the whole run."""
@@ -340,9 +409,9 @@ async def _run() -> None:
             p._note(f"subsumed-merge failed ({exc!r})")
         p.done = 1
 
-        # ---- Phase 4: prune dangling links + empty series ---------
+        # ---- Phase 4: prune orphans + mis-links -------------------
         p.phase_index = 4
-        p.phase = "Pruning orphans"
+        p.phase = "Pruning orphans & mis-links"
         p.total = 1
         p.done = 0
         from app.services.fandoms import (
@@ -351,6 +420,7 @@ async def _run() -> None:
         )
         try:
             p.links_pruned = await backfill_prune_dangling_comicseries()
+            p.mislinks_removed = await _prune_mislinked_series()
             p.series_pruned = await backfill_prune_empty_inferred_series()
         except Exception as exc:
             p._note(f"prune failed ({exc!r})")

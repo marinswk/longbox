@@ -192,6 +192,63 @@ def test_merge_subsumed_series_collapses_sub_into_umbrella():
     assert comic_series_id == umbrella_id
 
 
+def test_prune_mislinked_series_drops_unjustified_links_only():
+    """A non-primary link to a series the comic shares no issues with
+    is removed; a link to a series the comic genuinely covers stays."""
+    _reset_progress()
+
+    async def _seed() -> tuple[int, int, int]:
+        async with SessionLocal() as session:
+            right = Series(
+                name="BE Mislink Right",
+                expected_issues="BE ML 1\nBE ML 2\nBE ML 3",
+            )
+            wrong = Series(
+                name="BE Mislink Wrong",
+                expected_issues="BE Other 1\nBE Other 2",
+            )
+            session.add(right)
+            session.add(wrong)
+            await session.commit()
+            await session.refresh(right)
+            await session.refresh(wrong)
+            comic = Comic(
+                title="BE Mislink TPB",
+                collected_issues="BE ML 1\nBE ML 2",
+            )
+            session.add(comic)
+            await session.commit()
+            await session.refresh(comic)
+            # Two non-primary links: one justified, one not.
+            session.add(ComicSeries(
+                comic_id=comic.id, series_id=right.id, is_primary=False,
+            ))
+            session.add(ComicSeries(
+                comic_id=comic.id, series_id=wrong.id, is_primary=False,
+            ))
+            await session.commit()
+            return comic.id, right.id, wrong.id
+
+    with _client():
+        comic_id, right_id, wrong_id = asyncio.run(_seed())
+        removed = asyncio.run(lc._prune_mislinked_series())
+
+        async def _links() -> set[int]:
+            async with SessionLocal() as session:
+                rows = (await session.exec(
+                    select(ComicSeries.series_id).where(
+                        ComicSeries.comic_id == comic_id
+                    )
+                )).all()
+            return {r if isinstance(r, int) else r[0] for r in rows}
+
+        links = asyncio.run(_links())
+
+    assert removed >= 1
+    assert right_id in links       # justified link kept
+    assert wrong_id not in links   # unjustified link removed
+
+
 def test_cleanup_post_returns_running_fragment_without_double_starting():
     """When a run is already in flight, POSTing the button again just
     re-renders the live progress fragment (with the HTMX poll armed)

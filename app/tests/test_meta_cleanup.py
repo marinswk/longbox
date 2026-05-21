@@ -184,6 +184,23 @@ def test_parse_entries_dashed_title_without_issue_number_not_combined():
     assert out[0].article_id is None
 
 
+def test_parse_entries_en_dash_one_shot_title_not_split():
+    """Crossover one-shot article titles legitimately contain an
+    EN-dash ("War of the Bounty Hunters – Jabba the Hutt 1"). Only the
+    EM-dash is the legacy StoryCite separator — en-dash titles must
+    stay intact, not be split into a bogus "Jabba the Hutt 1" book."""
+    for title in (
+        "War of the Bounty Hunters – Jabba the Hutt 1",
+        "Return of the Jedi – Lando 1",
+        "Return of the Jedi – Ewoks 1",
+    ):
+        out = parse_entries(title)
+        assert len(out) == 1
+        assert out[0].linkable is True
+        assert out[0].article_id is None, f"{title!r} wrongly split"
+        assert out[0].text == title
+
+
 def test_parse_entries_marks_comma_lists_non_linkable():
     out = parse_entries("Knights 1, Knights 2, Knights 3")
     assert len(out) == 1
