@@ -502,6 +502,49 @@ CONTENTS_PLUS_COVER_GALLERY_WIKITEXT = (
 )
 
 
+# A series whose ==Issues== list nests issue bullets (`**`) under
+# sub-section group headers (`*`) — the Classic Star Wars shape.
+
+NESTED_ISSUES_WIKITEXT = (
+    "{{Top|rwm}}\n"
+    "{{ComicSeries|title=''BE Nested Probe''}}\n"
+    "==Issues==\n"
+    "*Original run (group header, no wikilink)\n"
+    "**[[BE Nested Probe 1]]\n"
+    "**[[BE Nested Probe 2]]\n"
+    "*[[BE Nested Probe: Side Story (comic series)|''Side Story'']] (a header)\n"
+    "**[[BE Nested Probe: Side Story 1]]\n"
+    "**[[BE Nested Probe: Side Story 2]]\n"
+    "==External links==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_skips_nested_group_headers():
+    """In a nested ==Issues== list the `*` group headers (a plain
+    caption or a sub-series link) must NOT be counted as issues —
+    only the `**` leaf bullets are real, trackable entries."""
+    def _r(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={"parse": {
+                "title": "BE Nested Probe",
+                "wikitext": {"*": NESTED_ISSUES_WIKITEXT},
+            }})
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_r)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("BE Nested Probe"))
+    assert issues == [
+        "BE Nested Probe 1",
+        "BE Nested Probe 2",
+        "BE Nested Probe: Side Story 1",
+        "BE Nested Probe: Side Story 2",
+    ]
+
+
 @respx.mock
 def test_get_series_issues_ignores_cover_gallery_and_uses_contents():
     """Regression for /series/77: a trade article's ==Contents== holds

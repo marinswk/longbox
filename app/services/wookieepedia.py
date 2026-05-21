@@ -790,40 +790,44 @@ def _extract_bullet_targets(body: str) -> list[str]:
         2. the `story=` (or `book=`) field of a `{{StoryCite|…}}` template;
         3. the cleaned plain-text rendering of the line.
 
-    Recognises both:
-      * plain `*` bullets ("standard" Wookieepedia list).
-      * `:*` / `:**` indented bullets used on series articles like
-        "Star Wars Infinities" where issues sit one indent level
-        below their sub-series header:
-            *''[[Series sub-section]]''
-            :*[[Issue 1]]
-            :*[[Issue 2]]
+    Handles nested lists, where issues sit one level below a
+    sub-series / sub-section header. Both nesting conventions occur:
 
-    When BOTH a `*` header and `:*` issue lines are present, prefer
-    the issues — they're the trackable entries. If only top-level
-    `*` headers exist, fall back to them so simpler articles still
-    parse.
+        *Original series                 ← `*` header
+        **[[Issue 1]]                    ← `**` issue
+        **[[Issue 2]]
+
+        *''[[Series sub-section]]''       ← `*` header
+        :*[[Issue 1]]                    ← `:*` issue
+        :*[[Issue 2]]
+
+    A bullet is treated as a group HEADER when the bullet directly
+    after it is nested DEEPER (more `:`/`*` markers). Only leaf
+    bullets — the trackable issues — are returned. A flat single-
+    level list has no headers, so every bullet is kept.
     """
-    issue_lines: list[str] = []   # `:*` indented = actual issues
-    header_lines: list[str] = []  # `*`-only = section headers
+    # Parse each bullet line into (depth, line). Depth = the length
+    # of the leading `[:*]+` run, so `*`→1, `**`/`:*`→2, `:**`→3.
+    bullets: list[tuple[int, str]] = []
     for raw in body.splitlines():
         line = raw.strip()
         if not line:
             continue
         # Bullet prefixes can mix `:` (indent) and `*` (bullet marker).
-        # Recognise any leading run of those chars, but require at
-        # least one actual `*` so plain definition-list indents like
-        # `:foo` don't get picked up.
+        # Require at least one `*` so plain definition-list indents
+        # like `:foo` don't get picked up.
         m = re.match(r"^([:*]+)\s*", line)
         if not m or "*" not in m.group(1):
             continue
-        prefix = m.group(1)
-        if ":" in prefix:
-            issue_lines.append(line)
-        else:
-            header_lines.append(line)
+        bullets.append((len(m.group(1)), line))
 
-    chosen = issue_lines if issue_lines else header_lines
+    # Drop group headers: a bullet whose immediate successor is
+    # nested deeper. Everything else is a leaf = a real entry.
+    chosen: list[str] = [
+        line
+        for i, (depth, line) in enumerate(bullets)
+        if not (i + 1 < len(bullets) and bullets[i + 1][0] > depth)
+    ]
     out: list[str] = []
     for raw in chosen:
         line = re.sub(r"^[:*]+\s*", "", raw)
