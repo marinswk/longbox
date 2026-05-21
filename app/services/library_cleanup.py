@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from sqlmodel import select
 
 from app.db import SessionLocal
-from app.models import Comic, ComicSeries, Series
+from app.models import Comic, Series
 from app.services import comicvine, metron, wookieepedia
 
 _log = logging.getLogger("longbox.cleanup")
@@ -56,8 +56,9 @@ class CleanupProgress:
     series_refreshed: int = 0
     series_skipped: int = 0
     series_failed: int = 0
-    comics_processed: int = 0
-    links_added: int = 0
+    comics_repulled: int = 0
+    comics_relinked: int = 0
+    comics_failed: int = 0
     series_merged: int = 0
     series_pruned: int = 0
     links_pruned: int = 0
@@ -167,12 +168,61 @@ async def _refresh_one_series(series_id: int) -> None:
     _progress.series_refreshed += 1
 
 
-async def _count_links(comic_id: int) -> int:
+async def _repull_one_comic(comic_id: int) -> None:
+    """Re-pull one comic from its upstream source.
+
+    A comic with a source + source_id goes through `apply_repick` —
+    the canonical force-overwrite pipeline that re-fetches the
+    candidate, rewrites every source-owned field (collected_issues,
+    format, canon, era, cover…), reassigns its series and re-runs
+    multi-series inference. Re-parsing the (cached) upstream wikitext
+    with the current parser is what propagates every parser fix to
+    legacy rows.
+
+    A comic with no usable source can't be re-pulled — it falls back
+    to local inference over its existing `collected_issues` so its
+    series links still pick up parser improvements.
+    """
+    from fastapi import BackgroundTasks
+
+    from app.routers.add import _attach_inferred_series
+    from app.services.repick import apply_repick
+
     async with SessionLocal() as session:
-        rows = (await session.exec(
-            select(ComicSeries.series_id).where(ComicSeries.comic_id == comic_id)
-        )).all()
-    return len({r if isinstance(r, int) else r[0] for r in rows})
+        comic = await session.get(Comic, comic_id)
+        if comic is None:
+            return
+        src = (comic.source or "").strip()
+        sid = (comic.source_id or "").strip()
+        if src and sid:
+            bg = BackgroundTasks()
+            try:
+                outcome = await apply_repick(
+                    session, comic, source=src, source_id=sid, background=bg,
+                )
+            except Exception as exc:
+                _progress.comics_failed += 1
+                _progress._note(f"comic {comic_id}: re-pull crashed ({exc!r})")
+                return
+            if outcome.ok:
+                _progress.comics_repulled += 1
+                # Run the queued cover download(s) inline.
+                try:
+                    await bg()
+                except Exception:
+                    pass
+                return
+            _progress.comics_failed += 1
+            _progress._note(f"comic {comic_id}: {outcome.message}")
+            return
+
+    # No source to re-pull from — best-effort local re-inference.
+    try:
+        await _attach_inferred_series(comic_id)
+        _progress.comics_relinked += 1
+    except Exception as exc:
+        _progress.comics_failed += 1
+        _progress._note(f"comic {comic_id}: inference failed ({exc!r})")
 
 
 def _expected_set(series: Series) -> frozenset[str]:
@@ -258,28 +308,25 @@ async def _run() -> None:
                 p._note(f"series {sid}: {exc!r}")
             p.done += 1
 
-        # ---- Phase 2: re-infer comic -> series links --------------
+        # ---- Phase 2: re-pull every comic from upstream -----------
+        # apply_repick re-fetches each comic, force-overwrites its
+        # source-owned fields (collected_issues, format, canon, era,
+        # cover…) and re-runs series inference — so every parser fix
+        # reaches legacy rows. Comics with no source fall back to
+        # local re-inference.
         p.phase_index = 2
-        p.phase = "Re-linking comics to series"
-        from app.routers.add import _attach_inferred_series
+        p.phase = "Re-pulling comics from upstream"
         async with SessionLocal() as session:
-            rows = (await session.exec(
-                select(Comic.id)
-                .where(Comic.collected_issues.is_not(None))
-                .where(Comic.collected_issues != "")
-            )).all()
+            rows = (await session.exec(select(Comic.id))).all()
         comic_ids = [r if isinstance(r, int) else r[0] for r in rows]
         p.total = len(comic_ids)
         p.done = 0
         for cid in comic_ids:
             try:
-                before = await _count_links(cid)
-                await _attach_inferred_series(cid)
-                after = await _count_links(cid)
-                p.links_added += max(0, after - before)
-                p.comics_processed += 1
-            except Exception as exc:
-                p._note(f"comic {cid}: inference failed ({exc!r})")
+                await _repull_one_comic(cid)
+            except Exception as exc:  # defensive — _repull handles its own
+                p.comics_failed += 1
+                p._note(f"comic {cid}: {exc!r}")
             p.done += 1
 
         # ---- Phase 3: merge subsumed sub-series into umbrellas ----
