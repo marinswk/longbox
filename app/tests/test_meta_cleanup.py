@@ -207,6 +207,25 @@ def test_parse_entries_marks_comma_lists_non_linkable():
     assert out[0].linkable is False
 
 
+def test_parse_entries_keeps_in_title_comma_linkable():
+    """A comma that is punctuation inside an article title — not an
+    item separator — must NOT disqualify the entry. The marker for a
+    real list is a digit right before the comma."""
+    out = parse_entries(
+        "Darth Vader – Black, White & Red 1\n"
+        "Darth Maul – Black, White & Red 4"
+    )
+    assert [e.linkable for e in out] == [True, True]
+    assert [e.text for e in out] == [
+        "Darth Vader – Black, White & Red 1",
+        "Darth Maul – Black, White & Red 4",
+    ]
+    # And as the book half of a combined StoryCite entry.
+    combined = parse_entries("Inescapable (Darth Vader – Black, White & Red 1)")
+    assert combined[0].linkable is True
+    assert combined[0].article_id == "Darth Vader – Black, White & Red 1"
+
+
 def test_parse_entries_marks_hash_ranges_non_linkable():
     out = parse_entries("Star Wars #1-14")
     assert out[0].linkable is False

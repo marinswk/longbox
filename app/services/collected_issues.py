@@ -30,8 +30,16 @@ from typing import Optional
 # inspected on its own merits.
 _COLLECTING_PREFIX = re.compile(r"^\s*collect(?:s|ing)\b\s*:?\s*", re.IGNORECASE)
 
-# Anything in here disqualifies an entry from being an article-title link.
-_NON_TITLE_CHARS = re.compile(r"[,;#]")
+# `;` and `#` always disqualify an entry from being a single article
+# title — they signal a list or an issue-range (`#1-5`).
+_HARD_NON_TITLE_CHARS = re.compile(r"[;#]")
+
+# A comma is trickier: it disqualifies ONLY when it looks like an
+# item separator — i.e. a digit (an issue number) sits right before
+# it, as in "Knights 1, Knights 2" or "Star Wars 1-50, Vader 1". A
+# comma that's just punctuation inside a title — "Darth Vader –
+# Black, White & Red 1" — is perfectly valid.
+_LIST_COMMA = re.compile(r"\d\s*,")
 
 # The book half of a combined StoryCite entry must end with a
 # space-separated issue number ("Revelations (2023) 1", "Star Wars
@@ -151,13 +159,16 @@ class CollectedEntry:
 
 
 def _looks_like_article_title(s: str) -> bool:
-    """Heuristic: a clean Wookieepedia article title contains no list
-    delimiters (',' ';'), no issue-range markers ('#'), and isn't
-    excessively long. Parens are fine — many titles include "(YYYY)".
+    """Heuristic: a clean Wookieepedia article title has no `;`/`#`
+    list-or-range markers, no digit-followed-by-comma item separator,
+    and isn't excessively long. Parens are fine — many titles include
+    "(YYYY)"; an in-title comma is fine too ("Black, White & Red 1").
     """
     if not s:
         return False
-    if _NON_TITLE_CHARS.search(s):
+    if _HARD_NON_TITLE_CHARS.search(s):
+        return False
+    if _LIST_COMMA.search(s):
         return False
     if len(s) > 120:
         return False
