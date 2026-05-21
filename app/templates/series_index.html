@@ -165,9 +165,15 @@
         <p class="text-sm text-gray-600">{{ total }} series</p>
       </div>
     </div>
-    {# Cleanup-progress slot. On first load it shows the last run's
-       state (empty until the button is first pressed). #}
-    {% include "partials/_cleanup_progress.html" %}
+    {# Cleanup-progress slot. On a fresh page load it only shows the
+       panel when a run is actually in flight (so a stale "finished"
+       banner doesn't reappear forever after navigating back); the
+       finished summary is shown live via the HTMX poll instead. #}
+    {% if p.running %}
+      {% include "partials/_cleanup_progress.html" %}
+    {% else %}
+      <div id="cleanup-progress"></div>
+    {% endif %}
     <div id="series-grid" class="mt-6">
       {% include "partials/_series_grid.html" %}
     </div>

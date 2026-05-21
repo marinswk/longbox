@@ -35,9 +35,17 @@
     <p class="font-display text-lg tracking-wide text-crawl-dark">
       {% if p.phase == 'Failed' %}CLEANUP FAILED{% else %}CLEANUP FINISHED{% endif %}
     </p>
-    <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
-      {{ p.elapsed }}s
-    </p>
+    <div class="flex items-baseline gap-2">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+        {{ p.elapsed }}s
+      </span>
+      <button type="button"
+              onclick="document.getElementById('cleanup-progress').remove()"
+              aria-label="Dismiss"
+              class="rounded border-2 border-black bg-white px-1.5 leading-none font-bold shadow-[1px_1px_0_0_#000] hover:bg-paper">
+        ✕
+      </button>
+    </div>
   </div>
   <ul class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-700 sm:grid-cols-3">
     <li><span class="font-semibold">{{ p.series_refreshed }}</span> series refreshed</li>
