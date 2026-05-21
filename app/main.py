@@ -10,8 +10,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.migrations import run_migrations
 from app.routers import (
     add, admin, cleanup, comic_series, comics, containment, detail,
-    duplicates, home, imports, library, lookup, pwa, reading_log, search,
-    series as series_router, stats, tags,
+    duplicates, home, imports, library, lookup, missing, pwa, reading_log,
+    search, series as series_router, stats, tags,
 )
 from app.services.covers import covers_dir
 
@@ -129,5 +129,6 @@ def create_app() -> FastAPI:
     app.include_router(containment.router)
     app.include_router(comic_series.router)
     app.include_router(cleanup.router)
+    app.include_router(missing.router)
 
     return app

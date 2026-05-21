@@ -371,6 +371,37 @@ async def _api(client: httpx.AsyncClient, params: dict[str, Any]) -> dict[str, A
     return r.json()
 
 
+async def list_category_members(
+    category: str, *, member_type: str = "page",
+) -> list[str]:
+    """Return the titles of every member of a Wookieepedia category.
+
+    `category` must include the `Category:` prefix. `member_type` is
+    `"page"` for articles or `"subcat"` for child categories. Follows
+    `cmcontinue` pagination so categories larger than one API page
+    (500 rows) come back complete.
+    """
+    titles: list[str] = []
+    cont: Optional[str] = None
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while True:
+            params: dict[str, Any] = {
+                "action": "query", "list": "categorymembers",
+                "cmtitle": category, "cmlimit": 500, "cmtype": member_type,
+            }
+            if cont:
+                params["cmcontinue"] = cont
+            payload = await _api(client, params)
+            for m in payload.get("query", {}).get("categorymembers", []):
+                t = m.get("title")
+                if t:
+                    titles.append(t)
+            cont = payload.get("continue", {}).get("cmcontinue")
+            if not cont:
+                break
+    return titles
+
+
 async def _search_titles(query: str, limit: int = SEARCH_LIMIT) -> list[dict[str, Any]]:
     async def fetch() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0) as client:

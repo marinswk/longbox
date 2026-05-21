@@ -1,0 +1,115 @@
+{% extends "_base.html" %}
+{% set is_issues = kind == 'issues' %}
+{% block title %}{{ 'Missing Issues' if is_issues else 'Missing Trade Paperbacks' }} — Longbox{% endblock %}
+{% block content %}
+
+<section class="panel rounded-3xl p-6">
+  <h2 class="font-display text-3xl tracking-wide">
+    {{ 'MISSING ISSUES' if is_issues else 'MISSING TRADE PAPERBACKS' }}
+  </h2>
+  <p class="mt-2 text-sm text-gray-700">
+    {% if is_issues %}
+      Every canon single issue that you own neither on its own nor
+      collected inside a trade paperback — checked against the full
+      canon comics list from Wookieepedia.
+    {% else %}
+      Every canon trade paperback Wookieepedia knows about that isn't
+      in your library yet.
+    {% endif %}
+  </p>
+
+  {# Tab bar #}
+  <div class="mt-4 flex flex-wrap gap-2 text-xs">
+    {% for href, label, active in [
+      ('/missing/tpbs',   'Trade paperbacks', not is_issues),
+      ('/missing/issues', 'Single issues',    is_issues),
+    ] %}
+      <a href="{{ href }}"
+         class="rounded-full border-2 border-black px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000]
+                {% if active %}bg-crawl{% else %}bg-white hover:bg-paper{% endif %}">
+        {{ label }}
+      </a>
+    {% endfor %}
+  </div>
+
+  {% if index %}
+  <p class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+    <span>Canon list built {{ index.built_at[:10] }}</span>
+    <button type="button" hx-post="/missing/refresh"
+            hx-target="#missing-crawl" hx-swap="outerHTML"
+            class="rounded border-2 border-black bg-white px-2 py-0.5 font-semibold shadow-[1px_1px_0_0_#000] hover:bg-paper">
+      ↻ Refresh list
+    </button>
+  </p>
+  {% endif %}
+</section>
+
+{# Crawl-progress slot — only embedded while a crawl is actually
+   running (the finished-state reload lives in the poll response). #}
+{% if p.running %}
+  {% include "partials/_missing_progress.html" %}
+{% else %}
+  <div id="missing-crawl"></div>
+{% endif %}
+
+{% if summary is none %}
+<section class="panel mt-6 rounded-3xl p-10 text-center">
+  <p class="font-display text-2xl tracking-wide">BUILDING THE CANON LIST…</p>
+  <p class="mt-2 text-sm text-gray-600">
+    Crawling Wookieepedia for every canon comic. This takes a couple of
+    minutes the first time — the page refreshes itself when it's done.
+  </p>
+</section>
+{% else %}
+
+<section class="mt-4 grid grid-cols-3 gap-3">
+  {% for label, value in [
+    ('Canon total', summary.total),
+    ('You cover',   summary.owned),
+    ('Missing',     summary.missing),
+  ] %}
+  <div class="panel rounded-2xl p-3 text-center">
+    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{{ label }}</p>
+    <p class="font-display text-2xl tracking-wide text-crawl-dark">{{ value }}</p>
+  </div>
+  {% endfor %}
+</section>
+
+{% if not summary.groups %}
+<section class="panel mt-6 rounded-3xl p-10 text-center">
+  <p class="font-display text-2xl tracking-wide">NOTHING MISSING</p>
+  <p class="mt-2 text-sm text-gray-600">
+    You cover every canon {{ 'issue' if is_issues else 'trade paperback' }}
+    on the list. Impressive.
+  </p>
+</section>
+{% else %}
+<section class="mt-6 space-y-5">
+  {% for grp in summary.groups %}
+  <div class="panel rounded-2xl p-4">
+    <div class="flex items-baseline justify-between gap-3">
+      <h3 class="font-display text-lg tracking-wide text-crawl-dark">{{ grp.series }}</h3>
+      <span class="shrink-0 text-xs text-gray-500">
+        own {{ grp.owned }}/{{ grp.total }} · {{ grp.missing|length }} missing
+      </span>
+    </div>
+    <ul class="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
+      {% for title in grp.missing %}
+      <li class="flex items-baseline gap-2 text-sm">
+        <span class="shrink-0 text-crawl-dark">●</span>
+        <a href="https://starwars.fandom.com/wiki/{{ title|replace(' ', '_')|urlencode }}"
+           target="_blank" rel="noopener noreferrer"
+           class="min-w-0 flex-1 truncate text-gray-800 hover:underline"
+           title="{{ title }}">
+          {{ title }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endif %}
+
+{% endblock %}

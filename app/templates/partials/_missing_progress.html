@@ -1,0 +1,42 @@
+{# Canon-index crawl progress. Polled by HTMX while the crawl runs;
+   triggers a one-shot page reload when it finishes so the freshly
+   built list renders. The page only embeds this while running, so
+   the reload can't loop. #}
+{% if p.running %}
+<div id="missing-crawl"
+     hx-get="/missing/refresh/status"
+     hx-trigger="load delay:2s"
+     hx-swap="outerHTML"
+     class="mt-4 rounded-2xl border-2 border-black bg-paper-warm/50 p-4 shadow-[3px_3px_0_0_#000]">
+  <div class="flex items-baseline justify-between gap-3">
+    <p class="font-display text-lg tracking-wide text-crawl-dark">
+      BUILDING CANON LIST
+    </p>
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+      {{ p.elapsed }}s
+    </p>
+  </div>
+  <p class="mt-1 text-sm text-gray-700">{{ p.phase }}…</p>
+  <div class="mt-2 h-3 w-full overflow-hidden rounded-full border-2 border-black bg-white">
+    <div class="h-full bg-crawl transition-all" style="width: {{ p.pct }}%"></div>
+  </div>
+  <p class="mt-1 text-xs text-gray-600">
+    {% if p.total %}{{ p.done }} / {{ p.total }} categories{% else %}scanning…{% endif %}
+  </p>
+</div>
+{% elif p.phase == 'Failed' %}
+<div id="missing-crawl"
+     class="mt-4 rounded-2xl border-2 border-black bg-crawl-light/30 p-4 shadow-[3px_3px_0_0_#000]">
+  <p class="font-display text-lg tracking-wide text-crawl-dark">CRAWL FAILED</p>
+  <p class="mt-1 text-xs text-gray-600">{{ p.error }}</p>
+  <button type="button" hx-post="/missing/refresh"
+          hx-target="#missing-crawl" hx-swap="outerHTML"
+          class="mt-2 rounded-md border-2 border-black bg-white px-3 py-1 text-xs font-semibold shadow-[2px_2px_0_0_#000] hover:bg-paper">
+    Retry
+  </button>
+</div>
+{% elif p.phase == 'Finished' %}
+<div id="missing-crawl"><script>window.location.reload();</script></div>
+{% else %}
+<div id="missing-crawl"></div>
+{% endif %}
