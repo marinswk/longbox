@@ -479,6 +479,56 @@ def test_get_series_issues_parses_gallery_blocks_for_epic_collection():
     ]
 
 
+# Trade article: real issue list in ==Contents==, plus a decorative
+# ===Cover gallery=== whose captions wikilink non-issue articles.
+
+CONTENTS_PLUS_COVER_GALLERY_WIKITEXT = (
+    "{{Top|rwm}}\n"
+    "{{ComicCollection\n"
+    "|title=''Classic Star Wars: Han Solo at Stars' End''\n"
+    "|publisher=[[Dark Horse Comics]]\n"
+    "}}\n"
+    "==Contents==\n"
+    "*[[Classic Star Wars: Han Solo at Stars' End 1|''…'' 1]]\n"
+    "*[[Classic Star Wars: Han Solo at Stars' End 2|''…'' 2]]\n"
+    "*[[Classic Star Wars: Han Solo at Stars' End 3|''…'' 3]]\n"
+    "==Media==\n"
+    "===Cover gallery===\n"
+    "<gallery captionalign=\"center\">\n"
+    "File:tpb.jpg|Original cover\n"
+    "File:legends.jpg|[[Marvel Comics|Marvel]] [[Epic Collection|Legends Epic Collection]] cover\n"
+    "</gallery>\n"
+    "==Sources==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_ignores_cover_gallery_and_uses_contents():
+    """Regression for /series/77: a trade article's ==Contents== holds
+    the real issue list, but a ===Cover gallery=== wikilinks
+    "[[Marvel Comics|Marvel]]" in a caption. The whole-document
+    gallery scan must skip cover galleries so it doesn't return a
+    bogus "Marvel Comics" issue and shadow the Contents list."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "HSSE Probe",
+                          "wikitext": {"*": CONTENTS_PLUS_COVER_GALLERY_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("HSSE Probe"))
+    assert issues == [
+        "Classic Star Wars: Han Solo at Stars' End 1",
+        "Classic Star Wars: Han Solo at Stars' End 2",
+        "Classic Star Wars: Han Solo at Stars' End 3",
+    ]
+
+
 # Star Wars Omnibus: prettytable rows under ===Installments=== with
 # the volume title in bold-italic, prefixed with `N. ` and wikilinked.
 

@@ -998,6 +998,35 @@ def _extract_gallery_links(wikitext: str) -> list[str]:
     return out
 
 
+# ==Cover gallery== / ==Covers== headings hold cover-art variants —
+# their <gallery> blocks are decorative, never an issue/volume list.
+_COVER_GALLERY_HEADER = re.compile(
+    r"^={2,4}\s*(?:cover\s+gallery|covers?)\s*={2,4}\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _strip_cover_gallery_sections(wikitext: str) -> str:
+    """Remove every ==Cover gallery== / ==Covers== section (heading +
+    body) from `wikitext`.
+
+    A whole-document `<gallery>` scan would otherwise mistake a
+    wikilinked caption inside a cover gallery — e.g.
+    `File:X.jpg|[[Marvel Comics|Marvel]] Legends Epic Collection cover`
+    — for an issue, returning a bogus "Marvel Comics" entry. The
+    real issue list lives in ==Contents== / ==Issues==; cover
+    galleries must not shadow it.
+    """
+    while True:
+        m = _COVER_GALLERY_HEADER.search(wikitext)
+        if not m:
+            return wikitext
+        rest = wikitext[m.end():]
+        nxt = _NEXT_HEADING_OR_TABLE_END.search(rest)
+        end = m.end() + nxt.start() if nxt else len(wikitext)
+        wikitext = wikitext[: m.start()] + wikitext[end:]
+
+
 def _split_multivalue(raw: str) -> list[str]:
     """Wookieepedia uses bullets, newlines, and the rare comma to list
     multiple values inside one infobox field. _clean already stripped the
@@ -1384,8 +1413,12 @@ async def get_series_issues(article_title: str) -> list[str]:
     # Path 3: gallery-based articles that DON'T put their galleries
     # under a Volumes-style heading (Epic Collection puts them under
     # ==Media==/===Legends===/===Canon=== with no top-level Volumes
-    # section). Scan every gallery block in the whole wikitext.
-    gallery_items = _extract_gallery_links(wikitext)
+    # section). Scan every gallery block in the whole wikitext —
+    # minus ==Cover gallery== sections, whose decorative galleries
+    # would otherwise shadow a real ==Contents== issue list.
+    gallery_items = _extract_gallery_links(
+        _strip_cover_gallery_sections(wikitext)
+    )
     if gallery_items:
         return gallery_items
 
