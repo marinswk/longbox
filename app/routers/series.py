@@ -177,6 +177,10 @@ async def series_index(
         publishers=publisher, fandoms=fandom, statuses=status,
         q=q, sort=sort, page=page, page_size=page_size, group=group,
     )
+    # The page embeds the library-cleanup progress slot; seed it with
+    # the current (or last-finished) job state.
+    from app.services.library_cleanup import get_progress
+    ctx["p"] = get_progress()
     return templates.TemplateResponse(request, "series_index.html", ctx)
 
 
