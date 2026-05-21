@@ -154,6 +154,36 @@ def test_strip_disambiguator_drops_trailing_parens_only():
     assert strip_disambiguator("Revelations (2023) 1") == "Revelations (2023) 1"
 
 
+def test_parse_entries_recognises_legacy_dash_combined_entry():
+    """Older parses stored combined StoryCite entries as
+    "Story — Book N" (em-dash) rather than "Story (Book N)". The
+    matcher must still extract the book half from legacy data so a
+    library refresh isn't required."""
+    out = parse_entries("Blind Fury! — Star Wars Monthly 159")
+    assert len(out) == 1
+    e = out[0]
+    assert e.linkable is True
+    assert e.article_id == "Star Wars Monthly 159"
+    assert e.text == "Blind Fury! — Star Wars Monthly 159"
+
+
+def test_coverage_titles_handles_dash_combined_entry():
+    titles = coverage_titles("Death Masque — The Empire Strikes Back Monthly 149")
+    assert titles == {
+        "Death Masque",
+        "The Empire Strikes Back Monthly 149",
+        "Death Masque — The Empire Strikes Back Monthly 149",
+    }
+
+
+def test_parse_entries_dashed_title_without_issue_number_not_combined():
+    """A dashed title whose right half has no trailing issue number
+    ("Episode I — The Phantom Menace") is NOT a combined entry."""
+    out = parse_entries("Star Wars: Episode I — The Phantom Menace")
+    assert len(out) == 1
+    assert out[0].article_id is None
+
+
 def test_parse_entries_marks_comma_lists_non_linkable():
     out = parse_entries("Knights 1, Knights 2, Knights 3")
     assert len(out) == 1

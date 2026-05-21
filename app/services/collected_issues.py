@@ -97,6 +97,42 @@ def _split_combined_paren(text: str) -> Optional[tuple[str, str]]:
     return story, book
 
 
+# Legacy combined-entry separator: older parses emitted StoryCite
+# entries as "Story — Book N" (em/en-dash) instead of the current
+# "Story (Book N)". Surrounding whitespace is required so a hyphen
+# inside a title ("Knights of the Old Republic—War") doesn't split.
+_DASH_SEP = re.compile(r"\s+[—–]\s+")
+
+
+def _split_combined_dash(text: str) -> Optional[tuple[str, str]]:
+    """Detect a legacy `"<story> — <book N>"` dash-joined StoryCite
+    entry and return `(story, book)`, or `None`.
+
+    Splits on the LAST " — " so a story title that itself contains a
+    dash keeps it. The book half must end with a space-separated
+    issue number — that requirement is what stops a plain dashed
+    title ("Episode I — The Phantom Menace") being mis-split.
+    """
+    matches = list(_DASH_SEP.finditer(text))
+    if not matches:
+        return None
+    last = matches[-1]
+    story = text[: last.start()].strip()
+    book = text[last.end():].strip()
+    if not story or not book:
+        return None
+    if not _BOOK_ENDS_WITH_ISSUE_NUM.search(book):
+        return None
+    return story, book
+
+
+def _split_combined(text: str) -> Optional[tuple[str, str]]:
+    """Detect a combined StoryCite entry in either the current
+    `"Story (Book N)"` paren form or the legacy `"Story — Book N"`
+    dash form. Returns `(story, book)` or `None`."""
+    return _split_combined_paren(text) or _split_combined_dash(text)
+
+
 @dataclass
 class CollectedEntry:
     text: str
@@ -220,13 +256,13 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
         text = line.strip()
         if not text:
             continue
-        # Trailing-parens combined entry: "Story (Book N)". We need
-        # the LEFT-of-paren part to ALSO look like a clean entry —
-        # otherwise free-form prose like
-        #   "COLLECTING: Star Wars: Revelations (2023) 1 (Story 6)"
+        # Combined StoryCite entry: "Story (Book N)" (current) or the
+        # legacy "Story — Book N" dash form. We need the story half to
+        # ALSO look like a clean entry — otherwise free-form prose
+        # like "COLLECTING: Star Wars: Revelations (2023) 1 (Story 6)"
         # would be mistaken for a combined entry just because it
         # happens to end with parens-wrapped digits.
-        combined = _split_combined_paren(text)
+        combined = _split_combined(text)
         if combined:
             story_part, inner = combined
             if (
@@ -276,7 +312,7 @@ def coverage_titles(raw: str | None) -> set[str]:
         if e.article_id:
             # Combined entry: article_id is the book half.
             out.add(e.article_id)
-            combined = _split_combined_paren(e.text)
+            combined = _split_combined(e.text)
             if combined:
                 out.add(combined[0])  # story half
     return out
