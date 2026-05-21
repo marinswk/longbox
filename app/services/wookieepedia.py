@@ -36,7 +36,12 @@ API_URL = "https://starwars.fandom.com/api.php"
 SOURCE = "wookieepedia"
 SEARCH_LIMIT = 5
 TEXT_SEARCH_LIMIT = 20
-INFOBOX_TEMPLATES = {"comiccollection", "comicbook"}
+# Infobox templates the parser will read. `comicstory` is included so
+# series inference can resolve a short story collected inside a trade
+# (e.g. "Ring Race" → "Star Wars Rebels Magazine") — its infobox
+# carries the `series=` field. Stories are filtered out of /add search
+# results (see `_search_for_candidates`) so they stay un-addable.
+INFOBOX_TEMPLATES = {"comiccollection", "comicbook", "comicstory"}
 
 
 def is_configured() -> bool:
@@ -1199,6 +1204,14 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     )
     if sub:
         series, series_article_id = sub
+    # Some infoboxes (notably `{{ComicStory}}`) point `series=` at a
+    # SECTION of the series article — `[[Star Wars Rebels Magazine#Comics]]`.
+    # Keep the anchored form as the article id (get_series_issues
+    # scopes to a `#section` suffix), but strip the anchor off the
+    # display name so the Series row reads cleanly.
+    if series_article_id is None and series and "#" in series:
+        series_article_id = series
+        series = series.split("#", 1)[0].strip()
     publisher = _first_line(fields.get("publisher"))
 
     # Trade collections list their contents either inside |issues= on the
@@ -1278,8 +1291,14 @@ async def _search_for_candidates(query: str, limit: int = SEARCH_LIMIT) -> list[
         if not title:
             continue
         cand = await _candidate_from_title(title)
-        if cand is not None:
-            candidates.append(cand)
+        if cand is None:
+            continue
+        # ComicStory articles are parseable (so inference can read
+        # their `series=`), but they're short stories, not buyable
+        # comics — keep them out of the add/lookup picker.
+        if (cand.raw or {}).get("__template__", "").lower() == "comicstory":
+            continue
+        candidates.append(cand)
     return candidates
 
 

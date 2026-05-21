@@ -5,7 +5,9 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import respx
+from fastapi.testclient import TestClient
 
+from app.main import create_app
 from app.services import wookieepedia
 from app.services.wookieepedia import (
     _clean,
@@ -120,6 +122,75 @@ def test_extract_contents_section_gallery_scoped_to_section():
 def test_find_infobox_returns_none_for_pages_without_one():
     wt = "{{Top|rwm|can}}\n{{Reflist}}\n"
     assert _find_infobox(wt) is None
+
+
+def test_find_infobox_recognises_comicstory():
+    """{{ComicStory}} infoboxes are parsed so series inference can read
+    the `series=` field of a short story collected inside a trade."""
+    wt = (
+        "{{Top|rwm|can}}\n"
+        "{{ComicStory\n"
+        "|title=\"Ring Race\"\n"
+        "|writer=[[Martin Fisher]]\n"
+        "|series=[[Star Wars Rebels Magazine#Comics|Rebels Magazine]]\n"
+        "}}\n"
+    )
+    fields = _find_infobox(wt)
+    assert fields is not None
+    assert fields["__template__"] == "ComicStory"
+
+
+# A ComicStory article whose series= points at a section anchor.
+COMICSTORY_PARSE = {
+    "parse": {
+        "title": "Ring Race",
+        "wikitext": {"*": (
+            "{{Top|rwm|can}}\n"
+            "{{ComicStory\n"
+            "|title=\"Ring Race\"\n"
+            "|series=[[Star Wars Rebels Magazine#Comics|''Rebels Magazine'']]\n"
+            "}}\n"
+        )},
+    }
+}
+
+
+@respx.mock
+def test_get_article_resolves_comicstory_and_strips_section_anchor():
+    """A collected short story resolves to its series; a `#section`
+    anchor stays on `series_article_id` but is stripped off the name."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json=COMICSTORY_PARSE)
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with TestClient(create_app()):  # ensure the cache table exists
+        c = asyncio.run(wookieepedia.get_article("Ring Race"))
+    assert c is not None
+    assert c.series == "Star Wars Rebels Magazine"
+    assert c.series_article_id == "Star Wars Rebels Magazine#Comics"
+
+
+@respx.mock
+def test_search_does_not_surface_comicstory_articles():
+    """ComicStory articles are parseable but must not appear as
+    addable comics in the /add picker."""
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "query" and qs.get("list", [None])[0] == "search":
+            return httpx.Response(200, json={
+                "query": {"search": [{"title": "Ring Race"}]},
+            })
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json=COMICSTORY_PARSE)
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with TestClient(create_app()):  # ensure cache table exists
+        results = asyncio.run(wookieepedia.search_text("Ring Race"))
+    assert results == []
 
 
 # ---------------------------------------------------------------------------
