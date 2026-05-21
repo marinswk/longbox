@@ -75,10 +75,13 @@ async def _gather(session: AsyncSession) -> dict:
     # --- Section 1: KPI strip ----------------------------------------
     total_comics = int(_scalar(await session.exec(select(func.count(Comic.id)))) or 0)
     total_copies = int(_scalar(await session.exec(select(func.count(Copy.id)))) or 0)
+    # Count every Series row — the same population the /series page
+    # and the "series progress" section below report. Counting only
+    # distinct `Comic.series_id` (the old query) ignored series a
+    # comic belongs to via the multi-series link table, so the KPI
+    # badly undercounted (e.g. 31 vs the real 139).
     total_series = int(_scalar(
-        await session.exec(
-            select(func.count(func.distinct(Comic.series_id))).where(Comic.series_id.is_not(None))
-        )
+        await session.exec(select(func.count(Series.id)))
     ) or 0)
     total_publishers = int(_scalar(
         await session.exec(

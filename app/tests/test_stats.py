@@ -101,6 +101,20 @@ def test_storage_donut_hidden_when_no_storage_set():
             assert 'id="chart-storage"' not in r.text
 
 
+def test_series_kpi_matches_series_progress_total():
+    """The 'Series' KPI must count the same population as the series-
+    progress section — every Series row, not just ones a comic is
+    primary-linked to. The two used to disagree (31 vs 139)."""
+    with _client() as client:
+        _save(client, title="SK #1", isbn_13="9782000000301",
+              series="SK Series One", publisher="SK Pub")
+        _save(client, title="SK #2", isbn_13="9782000000302",
+              series="SK Series Two", publisher="SK Pub")
+        data = _stats_data(client.get("/stats").text)
+        assert data["totals"]["series"] == data["series_progress"]["total"]
+        assert data["totals"]["series"] >= 2
+
+
 def test_series_progress_aggregate_lists_complete_in_progress_untracked():
     with _client() as client:
         _save(client, title="SP #1", isbn_13="9782000000501",
