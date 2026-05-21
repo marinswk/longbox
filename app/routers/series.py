@@ -606,41 +606,8 @@ async def series_merge(
     if target is None:
         raise HTTPException(status_code=404, detail="target series not found")
 
-    # Adopt source-only metadata on the target.
-    if target.publisher_id is None and source.publisher_id is not None:
-        target.publisher_id = source.publisher_id
-    if not target.source and source.source:
-        target.source = source.source
-        target.source_id = source.source_id
-    if not target.expected_issues and source.expected_issues:
-        target.expected_issues = source.expected_issues
-
-    # Reassign every comic in one bulk UPDATE.
-    await session.exec(
-        update(Comic)
-        .where(Comic.series_id == series_id)
-        .values(series_id=target_id, updated_at=datetime.now(UTC))
-    )
-    # Move every multi-series link from source to target. Without
-    # this, the ComicSeries table holds dangling references to the
-    # deleted source row — which then mislead the orphan-prune
-    # logic on comic deletion. INSERT OR IGNORE handles the case
-    # where a comic is already linked to both source and target.
-    from sqlalchemy import text as _text
-    from app.models import ComicSeries
-    await session.exec(_text(
-        "INSERT OR IGNORE INTO comicseries "
-        "  (comic_id, series_id, is_primary, created_at) "
-        "SELECT comic_id, :tgt, is_primary, created_at "
-        "FROM comicseries WHERE series_id = :src"
-    ).bindparams(tgt=target_id, src=series_id))
-    from sqlalchemy import delete as sa_delete
-    await session.exec(
-        sa_delete(ComicSeries).where(ComicSeries.series_id == series_id)
-    )
-    session.add(target)
-    await session.delete(source)
-    await session.commit()
+    from app.services.series_merge import merge_series
+    await merge_series(session, series_id, target_id)
 
     # HTMX picks the redirect up; full-page flow falls back to a 303.
     return Response(

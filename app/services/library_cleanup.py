@@ -46,8 +46,8 @@ class CleanupProgress:
     """Live state of the cleanup run, shared with the polling UI."""
     running: bool = False
     phase: str = "Idle"
-    phase_index: int = 0          # 1..3 while running, 0 idle
-    phase_count: int = 3
+    phase_index: int = 0          # 1..4 while running, 0 idle
+    phase_count: int = 4
     done: int = 0                 # items finished in the current phase
     total: int = 0                # items in the current phase
     started_at: float = 0.0
@@ -58,6 +58,7 @@ class CleanupProgress:
     series_failed: int = 0
     comics_processed: int = 0
     links_added: int = 0
+    series_merged: int = 0
     series_pruned: int = 0
     links_pruned: int = 0
     errors: list[str] = field(default_factory=list)
@@ -174,6 +175,68 @@ async def _count_links(comic_id: int) -> int:
     return len({r if isinstance(r, int) else r[0] for r in rows})
 
 
+def _expected_set(series: Series) -> frozenset[str]:
+    return frozenset(
+        ln.strip()
+        for ln in (series.expected_issues or "").splitlines()
+        if ln.strip()
+    )
+
+
+async def _merge_subsumed_series() -> int:
+    """Collapse every "subsumed" series into the smallest series that
+    fully contains it.
+
+    A series A is subsumed by B when A's expected-issue set is a
+    strict subset of B's — every issue A tracks is already tracked by
+    B, so the standalone A row is pure duplication. This is what
+    consolidates a scattered family like the *Classic Star Wars*
+    sub-series (Han Solo at Stars' End, The Empire Strikes Back, …)
+    back into the single *Classic Star Wars* umbrella the user wants.
+
+    The merge target is the SMALLEST strict superset (the most
+    specific umbrella); if that target is itself subsumed, the chain
+    is followed to its root so nothing merges into a row that's about
+    to disappear. Returns the number of series merged away.
+    """
+    from app.services.series_merge import merge_series
+
+    async with SessionLocal() as session:
+        rows = (await session.exec(select(Series))).all()
+    sets: dict[int, frozenset[str]] = {}
+    for s in rows:
+        exp = _expected_set(s)
+        if exp:
+            sets[s.id] = exp
+
+    ids = list(sets)
+    # Each subsumed series -> its smallest strict superset.
+    target_of: dict[int, int] = {}
+    for a in ids:
+        supers = [b for b in ids if b != a and sets[a] < sets[b]]
+        if supers:
+            target_of[a] = min(supers, key=lambda b: len(sets[b]))
+
+    merged = 0
+    for source_id, target_id in target_of.items():
+        # Follow the chain to a non-subsumed root so we never merge
+        # into a series that is itself about to be merged away.
+        seen: set[int] = {source_id}
+        root = target_id
+        while root in target_of and root not in seen:
+            seen.add(root)
+            root = target_of[root]
+        if root == source_id:
+            continue
+        try:
+            async with SessionLocal() as session:
+                if await merge_series(session, source_id, root):
+                    merged += 1
+        except Exception as exc:
+            _progress._note(f"merge {source_id}->{root} failed ({exc!r})")
+    return merged
+
+
 async def _run() -> None:
     """The cleanup body. Each item is isolated in its own try/except so
     one bad series or comic can't abort the whole run."""
@@ -219,8 +282,19 @@ async def _run() -> None:
                 p._note(f"comic {cid}: inference failed ({exc!r})")
             p.done += 1
 
-        # ---- Phase 3: prune dangling links + empty series ---------
+        # ---- Phase 3: merge subsumed sub-series into umbrellas ----
         p.phase_index = 3
+        p.phase = "Merging subsumed series"
+        p.total = 1
+        p.done = 0
+        try:
+            p.series_merged = await _merge_subsumed_series()
+        except Exception as exc:
+            p._note(f"subsumed-merge failed ({exc!r})")
+        p.done = 1
+
+        # ---- Phase 4: prune dangling links + empty series ---------
+        p.phase_index = 4
         p.phase = "Pruning orphans"
         p.total = 1
         p.done = 0

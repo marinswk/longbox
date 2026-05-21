@@ -16,7 +16,7 @@ from sqlmodel import select
 
 from app.db import SessionLocal
 from app.main import create_app
-from app.models import Series
+from app.models import Comic, ComicSeries, Series
 from app.services import library_cleanup as lc
 
 
@@ -137,6 +137,59 @@ def test_cleanup_run_refreshes_a_wookieepedia_series():
         assert "BE Cleanup Probe 3" in expected
 
     _reset_progress()
+
+
+def test_merge_subsumed_series_collapses_sub_into_umbrella():
+    """A series whose expected-issue set is a strict subset of another
+    is merged into it — this is what consolidates scattered
+    "Classic Star Wars" sub-series into the single umbrella."""
+    _reset_progress()
+
+    async def _seed() -> tuple[int, int, int]:
+        async with SessionLocal() as session:
+            umbrella = Series(
+                name="BE Cleanup Umbrella",
+                expected_issues="\n".join([
+                    "BE CU 1", "BE CU 2", "BE CU 3", "BE CU 4",
+                ]),
+            )
+            sub = Series(
+                name="BE Cleanup Sub",
+                expected_issues="BE CU 3\nBE CU 4",
+            )
+            session.add(umbrella)
+            session.add(sub)
+            await session.commit()
+            await session.refresh(umbrella)
+            await session.refresh(sub)
+            comic = Comic(title="BE Cleanup Sub TPB", series_id=sub.id)
+            session.add(comic)
+            await session.commit()
+            await session.refresh(comic)
+            session.add(ComicSeries(
+                comic_id=comic.id, series_id=sub.id, is_primary=True,
+            ))
+            await session.commit()
+            return umbrella.id, sub.id, comic.id
+
+    with _client():  # ensure DB tables exist
+        umbrella_id, sub_id, comic_id = asyncio.run(_seed())
+        merged = asyncio.run(lc._merge_subsumed_series())
+    assert merged >= 1
+
+    async def _check() -> tuple[bool, int]:
+        async with SessionLocal() as session:
+            sub_still = (await session.exec(
+                select(Series).where(Series.id == sub_id)
+            )).first()
+            comic = (await session.exec(
+                select(Comic).where(Comic.id == comic_id)
+            )).first()
+            return sub_still is None, comic.series_id
+
+    sub_gone, comic_series_id = asyncio.run(_check())
+    assert sub_gone is True
+    assert comic_series_id == umbrella_id
 
 
 def test_cleanup_post_returns_running_fragment_without_double_starting():
