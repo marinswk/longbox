@@ -94,7 +94,9 @@ class MatchPair:
 
 
 def match_owned(
-    expected: list[str], comics: list[Comic]
+    expected: list[str],
+    comics: list[Comic],
+    trade_pool: list[Comic] | None = None,
 ) -> tuple[list[MatchPair], int]:
     """For each expected entry, find a Comic that satisfies it.
 
@@ -102,6 +104,18 @@ def match_owned(
     of `direct` (single-issue ownership) or `trade` (collected in a TPB).
     `owned_count` is the number of expected entries with any kind of
     match.
+
+    `comics` are the comics linked to this series — used for the
+    single-issue match paths (source_id, issue-number fallback), which
+    only make sense scoped to the series.
+
+    `trade_pool`, when given, is the WHOLE library: the collected-issues
+    (trade) match is run against it, not just the linked comics. Issue
+    article titles are globally unique, so a trade collecting
+    "Darth Vader (2020) 12" genuinely covers that issue for ANY series
+    that lists it — most importantly crossover/event series (e.g. War
+    of the Bounty Hunters), whose tie-in issues are collected in the
+    individual ongoing-series TPBs rather than under the event itself.
     """
     from app.services.collected_issues import strip_disambiguator
 
@@ -112,14 +126,18 @@ def match_owned(
     # disambiguator-stripped form, so a story collected via a
     # redirect title ("Tall Tales (Revelations)") still matches a
     # series that lists the canonical title ("Tall Tales") — and
-    # vice versa.
+    # vice versa. Linked comics are indexed FIRST so they win the
+    # display attribution when both a linked and an unrelated trade
+    # cover the same issue.
     trade_index: dict[str, Comic] = {}
-    for c in comics:
-        for title in _collected_titles(c):
-            trade_index.setdefault(title, c)
-            norm = strip_disambiguator(title)
-            if norm and norm != title:
-                trade_index.setdefault(norm, c)
+    pools = [comics] if trade_pool is None else [comics, trade_pool]
+    for pool in pools:
+        for c in pool:
+            for title in _collected_titles(c):
+                trade_index.setdefault(title, c)
+                norm = strip_disambiguator(title)
+                if norm and norm != title:
+                    trade_index.setdefault(norm, c)
 
     pairs: list[MatchPair] = []
     owned = 0
@@ -217,12 +235,17 @@ async def compute_progress(
     for c, sid in link_rows:
         comics_by_series[sid][c.id] = c
 
+    # Whole-library pool for the trade match — lets a crossover/event
+    # series count tie-in issues that are collected under the
+    # individual ongoing series rather than under the event.
+    trade_pool = (await session.exec(select(Comic))).all()
+
     out: dict[int, Progress] = {}
     for series in series_rows:
         expected = parse_expected(series)
         if not expected:
             continue
         comics = list(comics_by_series.get(series.id, {}).values())
-        _pairs, owned = match_owned(expected, comics)
+        _pairs, owned = match_owned(expected, comics, trade_pool=trade_pool)
         out[series.id] = Progress(owned=owned, total=len(expected))
     return out

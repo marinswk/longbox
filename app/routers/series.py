@@ -94,8 +94,14 @@ async def _load(session: AsyncSession, series_id: int) -> dict:
     )
     comics = list(comics_result.all())
 
+    # Whole-library pool: the collected-issues (trade) match runs
+    # against every comic, so a crossover/event series credits the
+    # tie-in issues that are collected under the individual ongoing
+    # series' TPBs rather than under the event itself.
+    trade_pool = list((await session.exec(select(Comic))).all())
+
     expected = parse_expected(series)
-    pairs, owned = match_owned(expected, comics)
+    pairs, owned = match_owned(expected, comics, trade_pool=trade_pool)
 
     # Comics in this series that aren't matched against any expected entry —
     # for example one-shots, FCBD specials, etc. Display them under "Other"

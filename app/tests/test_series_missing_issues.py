@@ -835,6 +835,33 @@ def test_match_owned_credits_story_referenced_by_redirect_title():
     assert owned2 == 1
 
 
+def test_match_owned_credits_crossover_tie_ins_via_trade_pool():
+    """A crossover/event series lists tie-in issues that are collected
+    under the individual ongoing series' TPBs, not under the event.
+    With a whole-library `trade_pool`, those still count as owned even
+    though the collecting comic isn't linked to the event series."""
+    from app.services.series_progress import match_owned
+
+    # The TPB belongs to (is linked to) the ongoing Darth Vader series.
+    vader_tpb = Comic(
+        title="Darth Vader Vol. 3",
+        collected_issues="Darth Vader (2020) 12\nDarth Vader (2020) 13",
+    )
+    # The event series' own page has no comics linked to it.
+    expected = ["Darth Vader (2020) 12", "War of the Bounty Hunters 1"]
+
+    # Without the pool: the event sees nothing.
+    _pairs, owned = match_owned(expected, [])
+    assert owned == 0
+
+    # With the whole library as the trade pool: the tie-in is credited.
+    pairs, owned = match_owned(expected, [], trade_pool=[vader_tpb])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Darth Vader (2020) 12"].trade is vader_tpb
+    assert by_title["War of the Bounty Hunters 1"].trade is None
+    assert owned == 1
+
+
 def test_comic_detail_links_to_series_page():
     with _client() as client:
         cid = _save(client, title="Linked Comic", issue_number="1",
