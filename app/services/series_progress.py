@@ -103,13 +103,23 @@ def match_owned(
     `owned_count` is the number of expected entries with any kind of
     match.
     """
+    from app.services.collected_issues import strip_disambiguator
+
     by_source_id = {c.source_id: c for c in comics if c.source_id}
     by_issue_number = {c.issue_number: c for c in comics if c.issue_number}
 
+    # Index every collected title under both its exact form AND its
+    # disambiguator-stripped form, so a story collected via a
+    # redirect title ("Tall Tales (Revelations)") still matches a
+    # series that lists the canonical title ("Tall Tales") — and
+    # vice versa.
     trade_index: dict[str, Comic] = {}
     for c in comics:
         for title in _collected_titles(c):
             trade_index.setdefault(title, c)
+            norm = strip_disambiguator(title)
+            if norm and norm != title:
+                trade_index.setdefault(norm, c)
 
     pairs: list[MatchPair] = []
     owned = 0
@@ -119,7 +129,13 @@ def match_owned(
             num = _trailing_number(title)
             if num is not None:
                 direct = by_issue_number.get(num)
-        trade = None if direct is not None else trade_index.get(title)
+        trade = None
+        if direct is None:
+            trade = trade_index.get(title)
+            if trade is None:
+                norm = strip_disambiguator(title)
+                if norm != title:
+                    trade = trade_index.get(norm)
         if direct is not None or trade is not None:
             owned += 1
         pairs.append(MatchPair(title=title, direct=direct, trade=trade))

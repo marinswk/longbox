@@ -714,6 +714,34 @@ def test_match_owned_credits_anthology_story_from_combined_entry():
     assert owned == 3
 
 
+def test_match_owned_credits_story_referenced_by_redirect_title():
+    """A story can be filed under both a disambiguated redirect title
+    ("Tall Tales (Revelations)") and a canonical one ("Tall Tales").
+    A TPB's StoryCite and the series' issue table don't always pick
+    the same one, so the matcher compares disambiguator-insensitively."""
+    from app.services.series_progress import match_owned
+
+    # TPB collects the story via the disambiguated redirect title.
+    trade = Comic(
+        title="Doctor Aphra Vol. 7",
+        collected_issues=(
+            "Doctor Aphra (2020) 40\n"
+            "Tall Tales (Revelations) (Revelations (2023) 1)"
+        ),
+    )
+    # Series lists the canonical title.
+    pairs, owned = match_owned(["Doctor Aphra (2020) 40", "Tall Tales"], [trade])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Tall Tales"].trade is trade
+    assert owned == 2
+
+    # Reverse: series disambiguated, TPB plain — also matches.
+    trade2 = Comic(title="Other", collected_issues="Tall Tales (Free Comic Book Day 2024: Star Wars 1)")
+    pairs2, owned2 = match_owned(["Tall Tales (Revelations)"], [trade2])
+    assert pairs2[0].trade is trade2
+    assert owned2 == 1
+
+
 def test_comic_detail_links_to_series_page():
     with _client() as client:
         cid = _save(client, title="Linked Comic", issue_number="1",

@@ -28,7 +28,11 @@ from sqlmodel import select
 from app.db import SessionLocal
 from app.main import create_app
 from app.models import Comic, Publisher, Series
-from app.services.collected_issues import coverage_titles, parse_entries
+from app.services.collected_issues import (
+    coverage_titles,
+    parse_entries,
+    strip_disambiguator,
+)
 from app.services.fandoms import backfill_strip_multiline_names
 
 
@@ -138,6 +142,16 @@ def test_coverage_titles_plain_entries_yield_only_themselves():
 def test_coverage_titles_skips_non_linkable_prose():
     assert coverage_titles("COLLECTING: Star Wars 1-50, Vader 1") == set()
     assert coverage_titles(None) == set()
+
+
+def test_strip_disambiguator_drops_trailing_parens_only():
+    assert strip_disambiguator("Tall Tales (Revelations)") == "Tall Tales"
+    assert strip_disambiguator("The Curse (comic story)") == "The Curse"
+    # No trailing paren — left untouched.
+    assert strip_disambiguator("Tall Tales") == "Tall Tales"
+    # A trailing issue number is not a disambiguator.
+    assert strip_disambiguator("Star Wars (2020) 42") == "Star Wars (2020) 42"
+    assert strip_disambiguator("Revelations (2023) 1") == "Revelations (2023) 1"
 
 
 def test_parse_entries_marks_comma_lists_non_linkable():

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from app.models import Comic, Series
-from app.services.collected_issues import coverage_titles
+from app.services.collected_issues import coverage_titles, strip_disambiguator
 
 
 @dataclass
@@ -105,10 +105,17 @@ def _comic_coverage(comic: Comic, known_issues: set[str]) -> set[str]:
     # `coverage_titles` yields the story title, the host-book title and
     # the verbatim line for combined StoryCite entries — so a trade
     # that reprints an anthology one-shot's story is recognised by the
-    # story name (the key Wookieepedia files under each series).
+    # story name (the key Wookieepedia files under each series). A
+    # story may be referenced via a disambiguated redirect title, so
+    # fall back to the disambiguator-stripped form against the
+    # ground-truth issue set.
     for article in coverage_titles(comic.collected_issues):
         if article in known_issues:
             coverage.add(article)
+            continue
+        norm = strip_disambiguator(article)
+        if norm != article and norm in known_issues:
+            coverage.add(norm)
     return coverage
 
 

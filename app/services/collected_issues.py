@@ -38,6 +38,25 @@ _NON_TITLE_CHARS = re.compile(r"[,;#]")
 # Tales 16"). A trailing letter suffix ("12A") is allowed.
 _BOOK_ENDS_WITH_ISSUE_NUM = re.compile(r"\S\s+\d+[A-Za-z]?$")
 
+# Trailing "(...)" Wookieepedia disambiguator — "(Revelations)",
+# "(comic story)", "(short story)". A title ending in a number
+# ("Star Wars (2020) 42") has no trailing paren so it's left alone.
+_TRAILING_DISAMBIGUATOR = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def strip_disambiguator(title: str) -> str:
+    """Drop a trailing parenthetical disambiguator from a Wookieepedia
+    article title.
+
+    Wookieepedia routinely files a story under TWO titles: a
+    disambiguated one ("Tall Tales (Revelations)") and a plain
+    canonical one ("Tall Tales"), with one redirecting to the other.
+    A TPB's `{{StoryCite}}` and a series' `{{Comictable-issue}}` don't
+    always pick the same one — so issue-title matching has to compare
+    them disambiguator-insensitively.
+    """
+    return _TRAILING_DISAMBIGUATOR.sub("", title).strip()
+
 
 def _split_combined_paren(text: str) -> Optional[tuple[str, str]]:
     """Detect a `"<story> (<book>)"` combined StoryCite entry and
