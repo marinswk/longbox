@@ -37,6 +37,8 @@
     hx-post="/add/lookup"
     hx-target="#flow"
     hx-swap="innerHTML"
+    hx-indicator="#search-indicator"
+    hx-disabled-elt="find button"
   >
     <input
       type="text"
@@ -121,6 +123,8 @@
       hx-post="/add/text-search"
       hx-target="#flow"
       hx-swap="innerHTML"
+      hx-indicator="#search-indicator"
+      hx-disabled-elt="find button"
     >
       <input
         type="text"
@@ -168,6 +172,11 @@
     z-index: 35;
     background: rgba(0, 0, 0, 0.5);
   }
+  /* Search indicator: collapsed entirely until HTMX flags an
+     in-flight request on it (display, not opacity, so it leaves no
+     gap when idle). */
+  #search-indicator { display: none; }
+  #search-indicator.htmx-request { display: flex; }
 </style>
 <div id="flow-backdrop" class="lb-sheet-backdrop hidden" onclick="lbExitScanSheetMode()"></div>
 <button id="flow-sheet-close" type="button"
@@ -176,6 +185,15 @@
         style="top: calc(env(safe-area-inset-top, 0px) + 1rem);">
   ✕ Close
 </button>
+{# Live search feedback. Hidden until an HTMX lookup / text-search is
+   in flight (hx-indicator points here), so the user gets an
+   acknowledgement while the upstream sources are queried. #}
+<div id="search-indicator"
+     class="mt-6 items-center gap-3 rounded-xl border-2 border-black bg-paper-warm/60 p-3 text-sm"
+     aria-live="polite">
+  <span class="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-4 border-black border-t-transparent"></span>
+  <span>Searching Wookieepedia, ComicVine &amp; Metron — this can take a few seconds…</span>
+</div>
 <section id="flow" class="mt-8"></section>
 
 <script>
