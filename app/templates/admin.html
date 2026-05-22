@@ -2,7 +2,13 @@
 {% block title %}Admin — Longbox{% endblock %}
 {% block content %}
 
-<h2 class="font-display text-3xl tracking-wide">ADMIN</h2>
+<div class="flex flex-wrap items-baseline justify-between gap-2">
+  <h2 class="font-display text-3xl tracking-wide">ADMIN</h2>
+  <span class="rounded-full border-2 border-black bg-crawl px-3 py-0.5 text-xs font-bold shadow-[2px_2px_0_0_#000]"
+        title="Deployed application version">
+    Longbox v{{ app_version }}
+  </span>
+</div>
 <p class="mt-1 text-sm text-gray-600">
   Library data management — backups, exports, imports, cleanup.
 </p>

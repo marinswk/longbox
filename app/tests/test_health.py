@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.version import __version__
 
 
 def _client() -> TestClient:
@@ -13,7 +14,7 @@ def test_health():
     with _client() as client:
         r = client.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        assert r.json() == {"status": "ok", "version": __version__}
 
 
 def test_index_renders_landing_for_empty_library():

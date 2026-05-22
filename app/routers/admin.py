@@ -51,9 +51,14 @@ COVERS_PREFIX = "covers/"
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request, flash: str = "") -> HTMLResponse:
+    from app.version import __version__
     return templates.TemplateResponse(
         request, "admin.html",
-        {"export_version": EXPORT_VERSION, "flash": flash[:200]},
+        {
+            "export_version": EXPORT_VERSION,
+            "app_version": __version__,
+            "flash": flash[:200],
+        },
     )
 
 
