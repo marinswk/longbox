@@ -182,6 +182,17 @@ def test_detect_oneshot_series_routes_free_comic_book_day():
     )
 
 
+def test_detect_oneshot_series_routes_graphic_novels():
+    """An original graphic novel ('Hyperspace Stories: Qui-Gon') goes
+    to a per-line '<X> — Graphic Novels' series, not the numbered
+    issue series of the same franchise."""
+    wt = "body\n[[Category:Star Wars: Hyperspace Stories graphic novels]]\n"
+    assert _detect_oneshot_series(wt) == (
+        "Star Wars: Hyperspace Stories — Graphic Novels",
+        "Category:Star Wars: Hyperspace Stories graphic novels",
+    )
+
+
 def test_detect_oneshot_series_none_for_non_oneshot():
     assert _detect_oneshot_series("[[Category:2024 releases]]") is None
 

@@ -159,37 +159,47 @@ _CATEGORY_RX = re.compile(r"\[\[Category:([^\]\|]+)", re.IGNORECASE)
 
 
 def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
-    """If the article is a one-shot comic, return
-    `(series_name, category_source_id)`, else None.
+    """If the article is a standalone comic with no numbered series,
+    return `(series_name, category_source_id)`, else None.
 
-    One-shots are standalone comics with no numbered series — their
-    infobox `series=` names only the broad franchise. Wookieepedia
-    groups them in `Category:<X> one-shot comics`, so we route them
-    to a synthetic per-franchise "<X> — One-shots" series whose issue
-    list is that category's members (get_series_issues handles a
-    `Category:` source_id).
+    One-shots, Free Comic Book Day issues and original graphic novels
+    have no "issue 1, 2, 3…" run — their infobox `series=` names only
+    the broad franchise. Wookieepedia groups them in dedicated
+    categories, so we route them to a synthetic category-backed
+    series whose issue list IS that category's members
+    (get_series_issues handles a `Category:` source_id):
 
-    Precedence: a `Star Wars: <franchise>` one-shot category wins;
-    then Free Comic Book Day comics get their own bucket; then the
-    generic `Canon one-shot comics`. Publisher categories
-    ("Dark Horse Comics one-shot comics") are ignored.
+      * `Category:<X> one-shot comics` -> "<X> — One-shots"
+      * `Category:<X> graphic novels`  -> "<X> — Graphic Novels"
+      * `Category:Free Comic Book Day comics` -> "Star Wars — Free Comic Book Day"
+
+    Precedence: franchise one-shot, then franchise graphic novels,
+    then FCBD, then the generic `Canon one-shot comics`. Publisher
+    categories ("Dark Horse Comics one-shot comics") are ignored.
     """
     franchise_cat: Optional[str] = None
+    graphicnovel_cat: Optional[str] = None
     generic = False
     fcbd = False
     for m in _CATEGORY_RX.finditer(wikitext):
         cat = m.group(1).strip()
+        low = cat.lower()
         if cat == "Free Comic Book Day comics":
             fcbd = True
-        if not cat.lower().endswith("one-shot comics"):
+        if cat.startswith("Star Wars") and low.endswith(" graphic novels"):
+            graphicnovel_cat = cat
+        if not low.endswith("one-shot comics"):
             continue
-        if cat.lower() == "canon one-shot comics":
+        if low == "canon one-shot comics":
             generic = True
         elif cat.startswith("Star Wars"):
             franchise_cat = cat
     if franchise_cat:
         base = franchise_cat[: -len(" one-shot comics")].strip()
         return f"{base} — One-shots", f"Category:{franchise_cat}"
+    if graphicnovel_cat:
+        base = graphicnovel_cat[: -len(" graphic novels")].strip()
+        return f"{base} — Graphic Novels", f"Category:{graphicnovel_cat}"
     if fcbd:
         return (
             "Star Wars — Free Comic Book Day",
