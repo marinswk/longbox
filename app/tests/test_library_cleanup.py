@@ -193,13 +193,19 @@ def test_merge_subsumed_series_collapses_sub_into_umbrella():
 
 
 def test_reassign_franchise_primaries_rehomes_off_empty_franchise():
-    """A comic whose primary is an empty, sourceless franchise series
-    is re-homed onto the real linked series its content overlaps."""
+    """A comic whose primary is an empty franchise series is re-homed
+    onto the real linked series its content overlaps — even when the
+    franchise row carries a (useless) wookieepedia source, as the
+    real 'Star Wars: The High Republic' row does."""
     _reset_progress()
 
     async def _seed() -> tuple[int, int, int]:
         async with SessionLocal() as session:
-            franchise = Series(name="BE Franchise Probe")  # empty + sourceless
+            # Empty expected list but a source — exactly series 202's shape.
+            franchise = Series(
+                name="BE Franchise Probe",
+                source="wookieepedia", source_id="BE Franchise Probe",
+            )
             real = Series(
                 name="BE Franchise Real",
                 source="wookieepedia", source_id="BE Franchise Real",

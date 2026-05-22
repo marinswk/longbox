@@ -304,8 +304,11 @@ async def _reassign_franchise_primaries() -> int:
 
     A trade whose own Wookieepedia article names only a broad
     franchise ("Star Wars: The High Republic", "Star Wars Rebels")
-    gets that franchise as its primary Series — an empty, sourceless
-    row that can never track anything. For each such comic, move its
+    gets that franchise as its primary Series — a row that can never
+    track anything because the franchise article has no issue list.
+    Such a series shows up here as having an EMPTY expected-issue
+    list even AFTER Phase 1 has tried to refresh every series (its
+    source, if any, yields nothing). For each comic on one, move its
     primary to the dominant REAL series among its links: the linked
     series (with a known issue list) whose issues overlap the comic's
     collected content the most. The emptied franchise rows are then
@@ -317,10 +320,12 @@ async def _reassign_franchise_primaries() -> int:
 
     async with SessionLocal() as session:
         rows = (await session.exec(select(Series))).all()
+    # Empty after the refresh phase = a dead franchise/artefact row.
+    # Source presence is irrelevant — "Star Wars: The High Republic"
+    # carries source=wookieepedia yet has no parseable issue list.
     franchise_ids = {
         s.id for s in rows
         if not (s.expected_issues or "").strip()
-        and not (s.source or "").strip()
     }
     if not franchise_ids:
         return 0
