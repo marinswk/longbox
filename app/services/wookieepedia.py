@@ -41,7 +41,9 @@ TEXT_SEARCH_LIMIT = 20
 # (e.g. "Ring Race" → "Star Wars Rebels Magazine") — its infobox
 # carries the `series=` field. Stories are filtered out of /add search
 # results (see `_search_for_candidates`) so they stay un-addable.
-INFOBOX_TEMPLATES = {"comiccollection", "comicbook", "comicstory"}
+INFOBOX_TEMPLATES = {
+    "comiccollection", "comicbook", "comicstory", "graphicnovel",
+}
 
 
 def is_configured() -> bool:
@@ -1264,7 +1266,7 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     # Fall back to `issues=` only when the article has no Contents
     # section.
     collected_issues = None
-    if fields.get("__template__", "").lower() == "comiccollection":
+    if fields.get("__template__", "").lower() in ("comiccollection", "graphicnovel"):
         items: list[str] = _extract_contents_section(wikitext)
         if not items:
             issues_raw = fields.get("issues") or ""

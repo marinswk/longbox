@@ -125,6 +125,23 @@ def test_find_infobox_returns_none_for_pages_without_one():
     assert _find_infobox(wt) is None
 
 
+def test_find_infobox_recognises_graphicnovel():
+    """{{GraphicNovel}} articles (graphic novels / anthology trades
+    like 'Tales from the Death Star') are parsed so they show up in
+    search / ISBN lookup."""
+    wt = (
+        "{{Top|rwm|can}}\n"
+        "{{GraphicNovel\n"
+        "|title=''Tales from the Death Star''\n"
+        "|publisher=[[Dark Horse Comics]]\n"
+        "|isbn=9781506738291\n"
+        "}}\n"
+    )
+    fields = _find_infobox(wt)
+    assert fields is not None
+    assert fields["__template__"] == "GraphicNovel"
+
+
 def test_detect_oneshot_series_prefers_franchise_category():
     """A one-shot routes to a per-franchise '<X> — One-shots' series,
     preferring a Star Wars franchise category over the generic /
