@@ -192,50 +192,49 @@ def test_merge_subsumed_series_collapses_sub_into_umbrella():
     assert comic_series_id == umbrella_id
 
 
-def test_synthesize_umbrella_series_fills_an_empty_sourceless_primary():
-    """A sourceless artefact series that's the primary of a trade gets
-    its expected-issue list synthesised from the series the trade is
-    linked to — so "Star Wars Rebels" stops showing 0/0."""
+def test_reassign_franchise_primaries_rehomes_off_empty_franchise():
+    """A comic whose primary is an empty, sourceless franchise series
+    is re-homed onto the real linked series its content overlaps."""
     _reset_progress()
 
-    async def _seed() -> int:
+    async def _seed() -> tuple[int, int, int]:
         async with SessionLocal() as session:
-            umbrella = Series(name="BE Umbrella Probe")  # no source, no expected
+            franchise = Series(name="BE Franchise Probe")  # empty + sourceless
             real = Series(
-                name="BE Umbrella Sub",
-                source="wookieepedia", source_id="BE Umbrella Sub",
-                expected_issues="BE US 1\nBE US 2\nBE US 3",
+                name="BE Franchise Real",
+                source="wookieepedia", source_id="BE Franchise Real",
+                expected_issues="BE FR 1\nBE FR 2\nBE FR 3",
             )
-            session.add(umbrella)
+            session.add(franchise)
             session.add(real)
             await session.commit()
-            await session.refresh(umbrella)
+            await session.refresh(franchise)
             await session.refresh(real)
-            comic = Comic(title="BE Umbrella TPB", series_id=umbrella.id,
-                          collected_issues="BE US 1\nBE US 2\nBE US 3")
+            comic = Comic(title="BE Franchise TPB", series_id=franchise.id,
+                          collected_issues="BE FR 1\nBE FR 2\nBE FR 3")
             session.add(comic)
             await session.commit()
             await session.refresh(comic)
-            session.add(ComicSeries(comic_id=comic.id, series_id=umbrella.id,
+            session.add(ComicSeries(comic_id=comic.id, series_id=franchise.id,
                                     is_primary=True))
             session.add(ComicSeries(comic_id=comic.id, series_id=real.id,
                                     is_primary=False))
             await session.commit()
-            return umbrella.id
+            return franchise.id, real.id, comic.id
 
     with _client():
-        umbrella_id = asyncio.run(_seed())
-        filled = asyncio.run(lc._synthesize_umbrella_series())
+        franchise_id, real_id, comic_id = asyncio.run(_seed())
+        reassigned = asyncio.run(lc._reassign_franchise_primaries())
 
-        async def _expected() -> str:
+        async def _primary() -> int:
             async with SessionLocal() as session:
-                s = await session.get(Series, umbrella_id)
-                return s.expected_issues or ""
+                c = await session.get(Comic, comic_id)
+                return c.series_id
 
-        expected = asyncio.run(_expected())
+        primary = asyncio.run(_primary())
 
-    assert filled >= 1
-    assert set(expected.split("\n")) == {"BE US 1", "BE US 2", "BE US 3"}
+    assert reassigned >= 1
+    assert primary == real_id  # re-homed off the franchise
 
 
 def test_prune_mislinked_series_drops_unjustified_links_only():

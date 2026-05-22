@@ -60,7 +60,7 @@ class CleanupProgress:
     comics_relinked: int = 0
     comics_failed: int = 0
     series_merged: int = 0
-    umbrellas_filled: int = 0
+    primaries_reassigned: int = 0
     series_pruned: int = 0
     links_pruned: int = 0
     mislinks_removed: int = 0
@@ -299,63 +299,81 @@ async def _merge_subsumed_series() -> int:
     return merged
 
 
-async def _synthesize_umbrella_series() -> int:
-    """Give an artefact "umbrella" series a real expected-issue list.
+async def _reassign_franchise_primaries() -> int:
+    """Re-home comics off franchise / artefact primary series.
 
-    A trade whose own Wookieepedia article names no series gets a
-    primary Series row created from its title — sourceless, with no
-    expected_issues, stuck at 0/0 forever. The classic case is a
-    line like *Star Wars Rebels*, whose actual content lives in the
-    *Star Wars Rebels Magazine* / *… Animation* series that the
-    trade's collected stories infer to.
-
-    For each such empty + sourceless series, set its expected_issues
-    to the union of the expected_issues of every other series its
-    comics are linked to. The umbrella then tracks everything its
-    trades collect. Idempotent. Returns the number filled in.
+    A trade whose own Wookieepedia article names only a broad
+    franchise ("Star Wars: The High Republic", "Star Wars Rebels")
+    gets that franchise as its primary Series — an empty, sourceless
+    row that can never track anything. For each such comic, move its
+    primary to the dominant REAL series among its links: the linked
+    series (with a known issue list) whose issues overlap the comic's
+    collected content the most. The emptied franchise rows are then
+    pruned by the orphan sweep. Returns the number reassigned.
     """
+    from app.services.collected_issues import (
+        coverage_titles, strip_disambiguator,
+    )
+
     async with SessionLocal() as session:
         rows = (await session.exec(select(Series))).all()
-        umbrellas = [
-            s for s in rows
-            if not (s.expected_issues or "").strip()
-            and not (s.source or "").strip()
-        ]
-        if not umbrellas:
-            return 0
-        expected_by_id: dict[int, frozenset[str]] = {}
-        for s in rows:
-            exp = _expected_set(s)
-            if exp:
-                expected_by_id[s.id] = exp
+    franchise_ids = {
+        s.id for s in rows
+        if not (s.expected_issues or "").strip()
+        and not (s.source or "").strip()
+    }
+    if not franchise_ids:
+        return 0
+    expected_by_id: dict[int, frozenset[str]] = {}
+    for s in rows:
+        exp = _expected_set(s)
+        if exp:
+            expected_by_id[s.id] = exp
 
-        filled = 0
-        for umb in umbrellas:
+    reassigned = 0
+    async with SessionLocal() as session:
+        for fid in franchise_ids:
             comic_ids = [
                 r if isinstance(r, int) else r[0]
                 for r in (await session.exec(
-                    select(Comic.id).where(Comic.series_id == umb.id)
+                    select(Comic.id).where(Comic.series_id == fid)
                 )).all()
             ]
-            if not comic_ids:
-                continue
-            linked: set[int] = set()
-            for r in (await session.exec(
-                select(ComicSeries.series_id)
-                .where(ComicSeries.comic_id.in_(comic_ids))
-            )).all():
-                linked.add(r if isinstance(r, int) else r[0])
-            linked.discard(umb.id)
-            union: set[str] = set()
-            for sid in linked:
-                union |= expected_by_id.get(sid, set())
-            if not union:
-                continue
-            umb.expected_issues = "\n".join(sorted(union))
-            session.add(umb)
-            filled += 1
+            for cid in comic_ids:
+                comic = await session.get(Comic, cid)
+                if comic is None:
+                    continue
+                cov = coverage_titles(comic.collected_issues)
+                cov |= {strip_disambiguator(t) for t in cov}
+                if comic.source_id:
+                    cov.add(comic.source_id)
+                    cov.add(strip_disambiguator(comic.source_id))
+                linked = {
+                    r if isinstance(r, int) else r[0]
+                    for r in (await session.exec(
+                        select(ComicSeries.series_id)
+                        .where(ComicSeries.comic_id == cid)
+                    )).all()
+                }
+                best: int | None = None
+                best_overlap = 0
+                for sid in linked:
+                    if sid == fid:
+                        continue
+                    exp = expected_by_id.get(sid)
+                    if not exp:
+                        continue
+                    overlap = len(cov & exp)
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best = sid
+                if best is None:
+                    continue
+                comic.series_id = best
+                session.add(comic)
+                reassigned += 1
         await session.commit()
-    return filled
+    return reassigned
 
 
 async def _prune_mislinked_series() -> int:
@@ -469,9 +487,9 @@ async def _run() -> None:
             p.done += 1
 
         # ---- Phase 3: consolidate series ---------------------------
-        # Merge subsumed sub-series into their umbrella, then give any
-        # sourceless artefact umbrella a real expected-issue list
-        # synthesised from the series its trades collect.
+        # Merge subsumed sub-series into their umbrella, then re-home
+        # comics off empty franchise/artefact primary series onto the
+        # real series their content belongs to.
         p.phase_index = 3
         p.phase = "Consolidating series"
         p.total = 1
@@ -481,9 +499,9 @@ async def _run() -> None:
         except Exception as exc:
             p._note(f"subsumed-merge failed ({exc!r})")
         try:
-            p.umbrellas_filled = await _synthesize_umbrella_series()
+            p.primaries_reassigned = await _reassign_franchise_primaries()
         except Exception as exc:
-            p._note(f"umbrella-synthesis failed ({exc!r})")
+            p._note(f"primary-reassign failed ({exc!r})")
         p.done = 1
 
         # ---- Phase 4: prune orphans + mis-links -------------------
@@ -492,10 +510,14 @@ async def _run() -> None:
         p.total = 1
         p.done = 0
         from app.services.fandoms import (
+            backfill_comic_series_links,
             backfill_prune_dangling_comicseries,
             backfill_prune_empty_inferred_series,
         )
         try:
+            # Normalise the link table after the reassignments above
+            # so is_primary flags match each Comic.series_id.
+            await backfill_comic_series_links()
             p.links_pruned = await backfill_prune_dangling_comicseries()
             p.mislinks_removed = await _prune_mislinked_series()
             p.series_pruned = await backfill_prune_empty_inferred_series()

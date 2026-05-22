@@ -11,6 +11,7 @@ from app.main import create_app
 from app.services import wookieepedia
 from app.services.wookieepedia import (
     _clean,
+    _detect_oneshot_series,
     _extract_contents_section,
     _find_infobox,
     _parse_date,
@@ -122,6 +123,33 @@ def test_extract_contents_section_gallery_scoped_to_section():
 def test_find_infobox_returns_none_for_pages_without_one():
     wt = "{{Top|rwm|can}}\n{{Reflist}}\n"
     assert _find_infobox(wt) is None
+
+
+def test_detect_oneshot_series_prefers_franchise_category():
+    """A one-shot routes to a per-franchise '<X> — One-shots' series,
+    preferring a Star Wars franchise category over the generic /
+    publisher ones."""
+    wt = (
+        "body\n"
+        "[[Category:Canon one-shot comics]]\n"
+        "[[Category:Dark Horse Comics one-shot comics]]\n"
+        "[[Category:Star Wars: The High Republic one-shot comics]]\n"
+    )
+    assert _detect_oneshot_series(wt) == (
+        "Star Wars: The High Republic — One-shots",
+        "Category:Star Wars: The High Republic one-shot comics",
+    )
+
+
+def test_detect_oneshot_series_falls_back_to_generic():
+    wt = "body\n[[Category:Canon one-shot comics]]\n"
+    assert _detect_oneshot_series(wt) == (
+        "Star Wars — One-shots", "Category:Canon one-shot comics",
+    )
+
+
+def test_detect_oneshot_series_none_for_non_oneshot():
+    assert _detect_oneshot_series("[[Category:2024 releases]]") is None
 
 
 def test_find_infobox_recognises_comicstory():

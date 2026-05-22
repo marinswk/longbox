@@ -152,6 +152,41 @@ _EC_MODERN_RX = re.compile(
 )
 
 
+# Article-body category tags: `[[Category:Foo]]` / `[[Category:Foo|sort]]`.
+_CATEGORY_RX = re.compile(r"\[\[Category:([^\]\|]+)", re.IGNORECASE)
+
+
+def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
+    """If the article is a one-shot comic, return
+    `(series_name, category_source_id)`, else None.
+
+    One-shots are standalone comics with no numbered series — their
+    infobox `series=` names only the broad franchise. Wookieepedia
+    groups them in `Category:<X> one-shot comics`, so we route them
+    to a synthetic per-franchise "<X> — One-shots" series whose issue
+    list is that category's members (get_series_issues handles a
+    `Category:` source_id). A `Star Wars: <franchise>` category wins
+    over the generic `Canon one-shot comics`; publisher categories
+    ("Dark Horse Comics one-shot comics") are ignored.
+    """
+    franchise_cat: Optional[str] = None
+    generic = False
+    for m in _CATEGORY_RX.finditer(wikitext):
+        cat = m.group(1).strip()
+        if not cat.lower().endswith("one-shot comics"):
+            continue
+        if cat.lower() == "canon one-shot comics":
+            generic = True
+        elif cat.startswith("Star Wars"):
+            franchise_cat = cat
+    if franchise_cat:
+        base = franchise_cat[: -len(" one-shot comics")].strip()
+        return f"{base} — One-shots", f"Category:{franchise_cat}"
+    if generic:
+        return "Star Wars — One-shots", "Category:Canon one-shot comics"
+    return None
+
+
 def _detect_epic_collection_subimprint(article_title: Optional[str]) -> Optional[tuple[str, str]]:
     """Return (display_series_name, source_id) for Marvel Epic
     Collection sub-imprints, else None.
@@ -1212,6 +1247,11 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     if series_article_id is None and series and "#" in series:
         series_article_id = series
         series = series.split("#", 1)[0].strip()
+    # One-shots have no numbered series — route them to a synthetic
+    # per-franchise one-shot series backed by a Wookieepedia category.
+    oneshot = _detect_oneshot_series(wikitext)
+    if oneshot:
+        series, series_article_id = oneshot
     publisher = _first_line(fields.get("publisher"))
 
     # Trade collections list their contents either inside |issues= on the
@@ -1377,6 +1417,13 @@ async def get_series_issues(article_title: str) -> list[str]:
     Empty list if the article doesn't exist or has no recognisable
     section.
     """
+    # Category-backed series: one-shot "series" are synthesised from a
+    # Wookieepedia category ("Category:Star Wars: The High Republic
+    # one-shot comics") rather than a series article — their issue
+    # list IS the category's members.
+    if article_title.startswith("Category:"):
+        return await list_category_members(article_title, member_type="page")
+
     # Strip the optional section anchor before fetching the page.
     section_anchor: Optional[str] = None
     if "#" in article_title:

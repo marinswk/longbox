@@ -30,6 +30,7 @@ from app.services.wookieepedia import list_category_members
 _log = logging.getLogger("longbox.canon")
 
 _ISSUES_ROOT = "Category:Canon comic book issues"
+_ONESHOTS_ROOT = "Category:Canon one-shot comics"
 _TPBS_ROOT = "Category:Canon trade paperbacks"
 _CACHE_SOURCE = "canon_index"
 _CACHE_KEY = "v1"
@@ -43,6 +44,9 @@ _SERIES_SUFFIXES = (
 
 def _series_from_category(cat_title: str) -> str:
     name = cat_title.replace("Category:", "").strip()
+    # One-shot categories become a synthetic "<X> — One-shots" series.
+    if name.lower().endswith(" one-shot comics"):
+        return name[: -len(" one-shot comics")].strip() + " — One-shots"
     for suf in _SERIES_SUFFIXES:
         if name.endswith(suf):
             return name[: -len(suf)].strip()
@@ -164,12 +168,22 @@ async def _crawl() -> None:
     try:
         p.phase = "Discovering categories"
         issue_cats = await _discover(_ISSUES_ROOT)
+        oneshot_cats = await _discover(_ONESHOTS_ROOT)
         tpb_cats = await _discover(_TPBS_ROOT)
-        p.total = len(issue_cats) + len(tpb_cats)
+        p.total = len(issue_cats) + len(oneshot_cats) + len(tpb_cats)
         p.done = 0
 
         p.phase = "Fetching canon single issues"
         issues = await _collect(issue_cats, _ISSUES_ROOT, "(uncategorised)")
+
+        # One-shots are single comics too — fold them into the issue
+        # list (they live in a separate Wookieepedia category tree).
+        # An entry already classified as a numbered issue keeps that
+        # series; a pure one-shot gets its "<X> — One-shots" group.
+        p.phase = "Fetching canon one-shots"
+        oneshots = await _collect(oneshot_cats, _ONESHOTS_ROOT, "Star Wars — One-shots")
+        for title, series in oneshots.items():
+            issues.setdefault(title, series)
         p.issues_found = len(issues)
 
         p.phase = "Fetching canon trade paperbacks"
