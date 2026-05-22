@@ -192,6 +192,52 @@ def test_merge_subsumed_series_collapses_sub_into_umbrella():
     assert comic_series_id == umbrella_id
 
 
+def test_synthesize_umbrella_series_fills_an_empty_sourceless_primary():
+    """A sourceless artefact series that's the primary of a trade gets
+    its expected-issue list synthesised from the series the trade is
+    linked to — so "Star Wars Rebels" stops showing 0/0."""
+    _reset_progress()
+
+    async def _seed() -> int:
+        async with SessionLocal() as session:
+            umbrella = Series(name="BE Umbrella Probe")  # no source, no expected
+            real = Series(
+                name="BE Umbrella Sub",
+                source="wookieepedia", source_id="BE Umbrella Sub",
+                expected_issues="BE US 1\nBE US 2\nBE US 3",
+            )
+            session.add(umbrella)
+            session.add(real)
+            await session.commit()
+            await session.refresh(umbrella)
+            await session.refresh(real)
+            comic = Comic(title="BE Umbrella TPB", series_id=umbrella.id,
+                          collected_issues="BE US 1\nBE US 2\nBE US 3")
+            session.add(comic)
+            await session.commit()
+            await session.refresh(comic)
+            session.add(ComicSeries(comic_id=comic.id, series_id=umbrella.id,
+                                    is_primary=True))
+            session.add(ComicSeries(comic_id=comic.id, series_id=real.id,
+                                    is_primary=False))
+            await session.commit()
+            return umbrella.id
+
+    with _client():
+        umbrella_id = asyncio.run(_seed())
+        filled = asyncio.run(lc._synthesize_umbrella_series())
+
+        async def _expected() -> str:
+            async with SessionLocal() as session:
+                s = await session.get(Series, umbrella_id)
+                return s.expected_issues or ""
+
+        expected = asyncio.run(_expected())
+
+    assert filled >= 1
+    assert set(expected.split("\n")) == {"BE US 1", "BE US 2", "BE US 3"}
+
+
 def test_prune_mislinked_series_drops_unjustified_links_only():
     """A non-primary link to a series the comic shares no issues with
     is removed; a link to a series the comic genuinely covers stays."""

@@ -60,6 +60,7 @@ class CleanupProgress:
     comics_relinked: int = 0
     comics_failed: int = 0
     series_merged: int = 0
+    umbrellas_filled: int = 0
     series_pruned: int = 0
     links_pruned: int = 0
     mislinks_removed: int = 0
@@ -255,16 +256,26 @@ async def _merge_subsumed_series() -> int:
     async with SessionLocal() as session:
         rows = (await session.exec(select(Series))).all()
     sets: dict[int, frozenset[str]] = {}
+    sourced: set[int] = set()
     for s in rows:
         exp = _expected_set(s)
         if exp:
             sets[s.id] = exp
+        if (s.source or "").strip():
+            sourced.add(s.id)
 
     ids = list(sets)
-    # Each subsumed series -> its smallest strict superset.
+    # Each subsumed series -> its smallest strict superset. A series
+    # backed by a real upstream source is never merged into a
+    # sourceless one — that would dissolve a genuine Wookieepedia
+    # series into a synthetic umbrella (see _synthesize_umbrella_series).
     target_of: dict[int, int] = {}
     for a in ids:
-        supers = [b for b in ids if b != a and sets[a] < sets[b]]
+        supers = [
+            b for b in ids
+            if b != a and sets[a] < sets[b]
+            and not (a in sourced and b not in sourced)
+        ]
         if supers:
             target_of[a] = min(supers, key=lambda b: len(sets[b]))
 
@@ -286,6 +297,65 @@ async def _merge_subsumed_series() -> int:
         except Exception as exc:
             _progress._note(f"merge {source_id}->{root} failed ({exc!r})")
     return merged
+
+
+async def _synthesize_umbrella_series() -> int:
+    """Give an artefact "umbrella" series a real expected-issue list.
+
+    A trade whose own Wookieepedia article names no series gets a
+    primary Series row created from its title — sourceless, with no
+    expected_issues, stuck at 0/0 forever. The classic case is a
+    line like *Star Wars Rebels*, whose actual content lives in the
+    *Star Wars Rebels Magazine* / *… Animation* series that the
+    trade's collected stories infer to.
+
+    For each such empty + sourceless series, set its expected_issues
+    to the union of the expected_issues of every other series its
+    comics are linked to. The umbrella then tracks everything its
+    trades collect. Idempotent. Returns the number filled in.
+    """
+    async with SessionLocal() as session:
+        rows = (await session.exec(select(Series))).all()
+        umbrellas = [
+            s for s in rows
+            if not (s.expected_issues or "").strip()
+            and not (s.source or "").strip()
+        ]
+        if not umbrellas:
+            return 0
+        expected_by_id: dict[int, frozenset[str]] = {}
+        for s in rows:
+            exp = _expected_set(s)
+            if exp:
+                expected_by_id[s.id] = exp
+
+        filled = 0
+        for umb in umbrellas:
+            comic_ids = [
+                r if isinstance(r, int) else r[0]
+                for r in (await session.exec(
+                    select(Comic.id).where(Comic.series_id == umb.id)
+                )).all()
+            ]
+            if not comic_ids:
+                continue
+            linked: set[int] = set()
+            for r in (await session.exec(
+                select(ComicSeries.series_id)
+                .where(ComicSeries.comic_id.in_(comic_ids))
+            )).all():
+                linked.add(r if isinstance(r, int) else r[0])
+            linked.discard(umb.id)
+            union: set[str] = set()
+            for sid in linked:
+                union |= expected_by_id.get(sid, set())
+            if not union:
+                continue
+            umb.expected_issues = "\n".join(sorted(union))
+            session.add(umb)
+            filled += 1
+        await session.commit()
+    return filled
 
 
 async def _prune_mislinked_series() -> int:
@@ -398,15 +468,22 @@ async def _run() -> None:
                 p._note(f"comic {cid}: {exc!r}")
             p.done += 1
 
-        # ---- Phase 3: merge subsumed sub-series into umbrellas ----
+        # ---- Phase 3: consolidate series ---------------------------
+        # Merge subsumed sub-series into their umbrella, then give any
+        # sourceless artefact umbrella a real expected-issue list
+        # synthesised from the series its trades collect.
         p.phase_index = 3
-        p.phase = "Merging subsumed series"
+        p.phase = "Consolidating series"
         p.total = 1
         p.done = 0
         try:
             p.series_merged = await _merge_subsumed_series()
         except Exception as exc:
             p._note(f"subsumed-merge failed ({exc!r})")
+        try:
+            p.umbrellas_filled = await _synthesize_umbrella_series()
+        except Exception as exc:
+            p._note(f"umbrella-synthesis failed ({exc!r})")
         p.done = 1
 
         # ---- Phase 4: prune orphans + mis-links -------------------
