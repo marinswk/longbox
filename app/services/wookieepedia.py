@@ -167,14 +167,20 @@ def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
     groups them in `Category:<X> one-shot comics`, so we route them
     to a synthetic per-franchise "<X> — One-shots" series whose issue
     list is that category's members (get_series_issues handles a
-    `Category:` source_id). A `Star Wars: <franchise>` category wins
-    over the generic `Canon one-shot comics`; publisher categories
+    `Category:` source_id).
+
+    Precedence: a `Star Wars: <franchise>` one-shot category wins;
+    then Free Comic Book Day comics get their own bucket; then the
+    generic `Canon one-shot comics`. Publisher categories
     ("Dark Horse Comics one-shot comics") are ignored.
     """
     franchise_cat: Optional[str] = None
     generic = False
+    fcbd = False
     for m in _CATEGORY_RX.finditer(wikitext):
         cat = m.group(1).strip()
+        if cat == "Free Comic Book Day comics":
+            fcbd = True
         if not cat.lower().endswith("one-shot comics"):
             continue
         if cat.lower() == "canon one-shot comics":
@@ -184,6 +190,11 @@ def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
     if franchise_cat:
         base = franchise_cat[: -len(" one-shot comics")].strip()
         return f"{base} — One-shots", f"Category:{franchise_cat}"
+    if fcbd:
+        return (
+            "Star Wars — Free Comic Book Day",
+            "Category:Free Comic Book Day comics",
+        )
     if generic:
         return "Star Wars — One-shots", "Category:Canon one-shot comics"
     return None

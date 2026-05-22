@@ -165,6 +165,23 @@ def test_detect_oneshot_series_falls_back_to_generic():
     )
 
 
+def test_detect_oneshot_series_routes_free_comic_book_day():
+    """FCBD comics get their own bucket — but a franchise one-shot
+    category still takes precedence over it."""
+    wt = "body\n[[Category:Free Comic Book Day comics]]\n"
+    assert _detect_oneshot_series(wt) == (
+        "Star Wars — Free Comic Book Day",
+        "Category:Free Comic Book Day comics",
+    )
+    both = (
+        "body\n[[Category:Free Comic Book Day comics]]\n"
+        "[[Category:Star Wars: The High Republic one-shot comics]]\n"
+    )
+    assert _detect_oneshot_series(both)[0] == (
+        "Star Wars: The High Republic — One-shots"
+    )
+
+
 def test_detect_oneshot_series_none_for_non_oneshot():
     assert _detect_oneshot_series("[[Category:2024 releases]]") is None
 
