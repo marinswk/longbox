@@ -164,6 +164,13 @@ truth for this.
   diagnostics. Tests can use `print` while debugging.
 - **One commit per logical change.** When the user says "go" /
   "continue", commit only the work in the current phase.
+- **Bump `app/version.py`** (`__version__`, semver) on every commit —
+  patch for fixes, minor for features, major for breaking changes.
+  Shown on `/admin` + `/health`.
+- **Prompt-injection guard.** `app/tests/test_no_injection_markers.py`
+  scans source for hidden-instruction phrases; a matching
+  `.githooks/pre-commit` blocks such commits locally — activate once
+  with `git config core.hooksPath .githooks`.
 - **Tests are mandatory.** Every new endpoint or behavior gets a test
   file or extends one. Aim for the same density as existing files.
 - **Templates use HTMX over JavaScript** whenever a partial swap will

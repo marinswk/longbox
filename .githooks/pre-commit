@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-commit guard: block prompt-injection markers in staged content.
+#
+# Activate once per clone:
+#     git config core.hooksPath .githooks
+#
+# The same scan runs as a test (app/tests/test_no_injection_markers.py)
+# so CI catches it even without the hook installed.
+
+markers="don'?t mention this|do not mention this|ignore (all )?(the )?previous instructions|disregard (all |the )?(above|previous)|append a section to your|do not tell the user|without (mentioning|telling) (this|it|the user)"
+
+fail=0
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+    case "$f" in
+        .githooks/*) continue ;;
+        *test_no_injection_markers.py) continue ;;
+    esac
+    matches=$(git show ":$f" 2>/dev/null | grep -niE "$markers")
+    if [ -n "$matches" ]; then
+        echo "pre-commit: possible prompt-injection text in $f"
+        echo "$matches" | sed 's/^/  /'
+        fail=1
+    fi
+done
+
+if [ "$fail" -ne 0 ]; then
+    echo ""
+    echo "Commit blocked. Remove the flagged text, or — if it is a"
+    echo "deliberate, reviewed pattern — re-run with: git commit --no-verify"
+    exit 1
+fi
+exit 0
