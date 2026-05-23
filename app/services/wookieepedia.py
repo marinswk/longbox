@@ -42,8 +42,37 @@ TEXT_SEARCH_LIMIT = 20
 # carries the `series=` field. Stories are filtered out of /add search
 # results (see `_search_for_candidates`) so they stay un-addable.
 INFOBOX_TEMPLATES = {
-    "comiccollection", "comicbook", "comicstory", "graphicnovel",
+    "comiccollection", "comicbook", "comicstory", "graphicnovel", "book",
 }
+
+# `{{Book}}` is generic and also used for prose novels. Articles whose
+# infobox is `Book` are accepted only when the categories prove the
+# article describes a comic-format release (graphic novel, trade
+# paperback, omnibus). Other infobox templates above are already
+# comic-specific and need no gating.
+_BOOK_COMIC_CATEGORY_TOKENS = (
+    "graphic novels",
+    "graphic novel",
+    "trade paperbacks",
+    "trade paperback",
+    "omnibus",
+    "omnibuses",
+    "comic film adaptations",
+)
+
+
+def _looks_like_comic_book_article(wikitext: str) -> bool:
+    """True iff the article's `[[Category:…]]` markers include a token
+    that identifies it as a comic / graphic novel / trade paperback /
+    omnibus. Used to gate the `{{Book}}` infobox fallback so prose
+    novels don't get parsed as comics.
+    """
+    for m in _CATEGORY_RX.finditer(wikitext):
+        cat = m.group(1).strip().lower()
+        for token in _BOOK_COMIC_CATEGORY_TOKENS:
+            if token in cat:
+                return True
+    return False
 
 
 def is_configured() -> bool:
@@ -1199,6 +1228,13 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     if not fields:
         return None
 
+    # Generic `{{Book}}` infoboxes are also used for prose novels — only
+    # accept them when categories prove the article is a comic-format
+    # release (graphic novel / TPB / omnibus).
+    if fields.get("__template__", "").lower() == "book":
+        if not _looks_like_comic_book_article(wikitext):
+            return None
+
     cover_url: Optional[str] = None
     image_field = fields.get("image")
     if image_field:
@@ -1210,7 +1246,11 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
                 cover_url = None
 
     creators: list[CreatorRef] = []
-    for role in ("writer", "penciller", "inker", "letterer", "colorist", "cover artist", "editor"):
+    for role in (
+        "writer", "author",
+        "penciller", "illustrator",
+        "inker", "letterer", "colorist", "cover artist", "editor",
+    ):
         raw_value = fields.get(role, "")
         if not raw_value:
             continue

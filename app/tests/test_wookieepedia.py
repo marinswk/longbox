@@ -14,6 +14,7 @@ from app.services.wookieepedia import (
     _detect_oneshot_series,
     _extract_contents_section,
     _find_infobox,
+    _looks_like_comic_book_article,
     _parse_date,
 )
 
@@ -195,6 +196,44 @@ def test_detect_oneshot_series_routes_graphic_novels():
 
 def test_detect_oneshot_series_none_for_non_oneshot():
     assert _detect_oneshot_series("[[Category:2024 releases]]") is None
+
+
+def test_find_infobox_recognises_book_template():
+    """`{{Book}}` is generic and shared with prose novels — `_find_infobox`
+    surfaces it, but `_candidate_from_title` gates it on categories that
+    prove the article is a comic-format release."""
+    wt = (
+        "{{Top|rwm|can}}\n"
+        "{{Book\n"
+        "|title=''Star Wars: The Prequel Trilogy – A Graphic Novel''\n"
+        "|author=[[Alessandro Ferrari]]\n"
+        "|illustrator=[[Matteo Piana]]\n"
+        "|publisher=[[Disney–Lucasfilm Press]]\n"
+        "|isbn=9781368002745\n"
+        "|isbn2=9781506746630\n"
+        "}}\n"
+    )
+    fields = _find_infobox(wt)
+    assert fields is not None
+    assert fields["__template__"] == "Book"
+
+
+def test_looks_like_comic_book_article_accepts_comic_categories():
+    assert _looks_like_comic_book_article("[[Category:Canon graphic novels]]")
+    assert _looks_like_comic_book_article("[[Category:Canon trade paperbacks]]")
+    assert _looks_like_comic_book_article("[[Category:Marvel omnibuses]]")
+    assert _looks_like_comic_book_article("[[Category:Comic film adaptations]]")
+
+
+def test_looks_like_comic_book_article_rejects_prose_novel():
+    """A typical Star Wars novel page has no GN/TPB/omnibus category —
+    the `{{Book}}` infobox must not be parsed as a comic for these."""
+    wt = (
+        "[[Category:Canon novels]]\n"
+        "[[Category:2017 novels]]\n"
+        "[[Category:Hardcover books]]\n"
+    )
+    assert _looks_like_comic_book_article(wt) is False
 
 
 def test_find_infobox_recognises_comicstory():
