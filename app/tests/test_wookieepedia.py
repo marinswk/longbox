@@ -219,7 +219,7 @@ def test_find_infobox_recognises_book_template():
     assert fields["__template__"] == "Book"
 
 
-def test_detect_movie_adaptation_series_routes_to_umbrella():
+def test_detect_movie_adaptation_series_routes_graphic_novel_to_umbrella():
     """A graphic-novel article in the 'Comic film adaptations' category
     (e.g. the Prequel / Original / Sequel Trilogy GNs) routes to the
     canonical 'Star Wars Movie Adaptations' umbrella article so all
@@ -229,17 +229,48 @@ def test_detect_movie_adaptation_series_routes_to_umbrella():
         "[[Category:Canon graphic novels]]\n"
         "[[Category:Comic film adaptations]]\n"
     )
-    assert _detect_movie_adaptation_series(wt) == (
+    assert _detect_movie_adaptation_series(
+        wt, "Star Wars: The Original Trilogy – A Graphic Novel"
+    ) == (
         "Star Wars Movie Adaptations",
         "Star Wars Movie Adaptations",
     )
+
+
+def test_detect_movie_adaptation_series_routes_adaptation_miniseries():
+    """A miniseries titled '…Adaptation' (e.g. Rogue One Adaptation,
+    Force Awakens Adaptation) also routes to the umbrella."""
+    wt = "body\n[[Category:Comic film adaptations]]\n"
+    assert _detect_movie_adaptation_series(
+        wt, "Star Wars: Rogue One Adaptation"
+    ) == (
+        "Star Wars Movie Adaptations",
+        "Star Wars Movie Adaptations",
+    )
+
+
+def test_detect_movie_adaptation_series_rejects_tie_in_oneshot():
+    """`Episode I: The Phantom Menace ½` carries the film-adaptation
+    category for thematic reasons but isn't itself the adaptation
+    comic. Without the title check, collected_issues inference drags
+    the containing Epic Collection into the umbrella series."""
+    wt = (
+        "body\n"
+        "[[Category:Comic film adaptations]]\n"
+        "[[Category:Legends one-shot comics]]\n"
+    )
+    assert _detect_movie_adaptation_series(
+        wt, "Episode I: The Phantom Menace ½"
+    ) is None
 
 
 def test_detect_movie_adaptation_series_none_when_category_missing():
     """Without the marker category, the umbrella fallback stays silent
     so unrelated articles aren't pulled into the movie-adaptation series."""
     wt = "body\n[[Category:Canon graphic novels]]\n"
-    assert _detect_movie_adaptation_series(wt) is None
+    assert _detect_movie_adaptation_series(
+        wt, "Star Wars: The Original Trilogy – A Graphic Novel"
+    ) is None
 
 
 def test_looks_like_comic_book_article_accepts_comic_categories():

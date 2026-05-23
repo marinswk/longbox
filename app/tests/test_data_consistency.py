@@ -25,7 +25,11 @@ from sqlmodel import select
 from app.db import SessionLocal
 from app.main import create_app
 from app.models import Comic, Publisher, Series
-from app.services.fandoms import backfill_merge_duplicate_series
+from app.services.fandoms import (
+    backfill_merge_duplicate_series,
+    backfill_strip_bogus_movie_adaptation_links,
+)
+from app.models import ComicSeries
 from app.services.schemas import LookupCandidate
 
 
@@ -223,6 +227,70 @@ def test_edit_series_name_moves_comic_to_different_series_row():
         assert c.series_id != old_series_id
         ser = _series(c.series_id)
         assert ser.name == "ED Move New Series"
+
+
+def test_strip_bogus_movie_adaptation_links_removes_unrelated_comics():
+    """Earlier the wookieepedia parser dragged any comic that *collected*
+    a film-adaptation tie-in (e.g. an Epic Collection holding
+    'Episode I: The Phantom Menace ½') into the 'Star Wars Movie
+    Adaptations' umbrella via ComicSeries. The fallback is now
+    title-gated; this backfill sweeps the existing bogus links."""
+    async def _seed():
+        async with SessionLocal() as session:
+            umbrella = Series(name="Star Wars Movie Adaptations")
+            epic = Series(name="MA Epic Collection")
+            session.add_all([umbrella, epic])
+            await session.flush()
+
+            # Real adaptation — title says so. Link must SURVIVE.
+            real = Comic(
+                series_id=umbrella.id, title="MA Rogue One Adaptation",
+                isbn_13="9799500000001",
+            )
+            # GN trilogy — title says so. Link must SURVIVE.
+            gn = Comic(
+                series_id=umbrella.id, title="MA The Prequel Trilogy – A Graphic Novel",
+                isbn_13="9799500000002",
+            )
+            # Bogus — Epic Collection, no 'Adaptation' / 'Graphic Novel'.
+            # Primary series is the Epic Collection, but it also has a
+            # stray ComicSeries link to the umbrella. Link must GO.
+            bogus = Comic(
+                series_id=epic.id, title="MA Epic Collection Rise of the Sith Vol. 2",
+                isbn_13="9799500000003",
+            )
+            session.add_all([real, gn, bogus])
+            await session.flush()
+
+            session.add_all([
+                ComicSeries(comic_id=real.id,  series_id=umbrella.id, is_primary=True),
+                ComicSeries(comic_id=gn.id,    series_id=umbrella.id, is_primary=True),
+                ComicSeries(comic_id=bogus.id, series_id=epic.id,     is_primary=True),
+                ComicSeries(comic_id=bogus.id, series_id=umbrella.id, is_primary=False),
+            ])
+            await session.commit()
+            return umbrella.id, bogus.id, real.id, gn.id
+
+    umbrella_id, bogus_id, real_id, gn_id = asyncio.run(_seed())
+
+    removed = asyncio.run(backfill_strip_bogus_movie_adaptation_links())
+    assert removed == 1  # only the bogus link was dropped
+
+    async def _check():
+        async with SessionLocal() as session:
+            rows = (await session.exec(
+                select(ComicSeries.comic_id)
+                .where(ComicSeries.series_id == umbrella_id)
+            )).all()
+            return {r if isinstance(r, int) else r[0] for r in rows}
+    linked = asyncio.run(_check())
+    assert real_id in linked
+    assert gn_id in linked
+    assert bogus_id not in linked
+
+    # Idempotent.
+    again = asyncio.run(backfill_strip_bogus_movie_adaptation_links())
+    assert again == 0
 
 
 def test_edit_form_includes_publisher_and_series_fields():

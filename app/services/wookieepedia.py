@@ -239,17 +239,33 @@ def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
     return None
 
 
-def _detect_movie_adaptation_series(wikitext: str) -> Optional[tuple[str, str]]:
-    """If the article is categorised as a comic film adaptation, route
-    its series to the canonical Wookieepedia umbrella
-    `Star Wars Movie Adaptations`. Used as a fallback only — articles
-    that already declare a `series=` win.
+def _detect_movie_adaptation_series(
+    wikitext: str, article_title: Optional[str]
+) -> Optional[tuple[str, str]]:
+    """If the article is a true comic film adaptation, route its series
+    to the canonical Wookieepedia umbrella `Star Wars Movie Adaptations`.
+    Used as a fallback only — articles that already declare a `series=`
+    win.
+
+    Signature for a real movie-adaptation comic:
+        * `Comic film adaptations` category, AND
+        * article title contains "Adaptation" or "Graphic Novel".
+
+    The title check excludes tie-in / promo one-shots (e.g. the
+    "Episode I: The Phantom Menace ½" promo) which carry the category
+    for thematic reasons but aren't themselves the adaptation comic.
+    Without the guard those tie-ins, when collected inside an Epic
+    Collection / omnibus, drag the containing volume into the
+    umbrella series via the inferred-series backfill.
 
     The umbrella exists as a real Wookieepedia article, so saving
     `series_article_id="Star Wars Movie Adaptations"` lets the series
     page's "Pull issues automatically" action populate the
     expected-issues list.
     """
+    title_low = (article_title or "").lower()
+    if "adaptation" not in title_low and "graphic novel" not in title_low:
+        return None
     for m in _CATEGORY_RX.finditer(wikitext):
         cat = m.group(1).strip().lower()
         if cat == "comic film adaptations":
@@ -1342,7 +1358,7 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     # comics cluster together instead of each spawning a
     # degenerate one-comic series named after the article title.
     if not series:
-        film = _detect_movie_adaptation_series(wikitext)
+        film = _detect_movie_adaptation_series(wikitext, art_title)
         if film:
             series, series_article_id = film
     publisher = _first_line(fields.get("publisher"))

@@ -297,6 +297,41 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     return total
 
 
+async def backfill_strip_bogus_movie_adaptation_links() -> int:
+    """Drop ComicSeries links to a series named `Star Wars Movie
+    Adaptations` from comics whose own title doesn't look like a movie
+    adaptation. Idempotent — no-op once the DB is clean.
+
+    Earlier the Wookieepedia film-adaptation fallback fired on any
+    article carrying the `Comic film adaptations` category, including
+    tie-in / promo one-shots (e.g. `Episode I: The Phantom Menace ½`).
+    When such a one-shot was collected inside an Epic Collection /
+    omnibus, `backfill_inferred_series_from_collected_issues` dragged
+    the containing volume into the umbrella series. The fallback is
+    now title-gated, but the bogus link rows it produced still need a
+    one-time sweep.
+
+    A comic is a true movie adaptation iff its title contains
+    'Adaptation' or 'Graphic Novel' (case-insensitive). Everything else
+    linked to the umbrella series was auto-attached in error.
+    """
+    from sqlalchemy import text
+    async with SessionLocal() as session:
+        result = await session.exec(text(
+            "DELETE FROM comicseries "
+            "WHERE series_id IN ("
+            "    SELECT id FROM series WHERE name = 'Star Wars Movie Adaptations'"
+            ") "
+            "AND comic_id IN ("
+            "    SELECT id FROM comic "
+            "    WHERE lower(title) NOT LIKE '%adaptation%' "
+            "      AND lower(title) NOT LIKE '%graphic novel%'"
+            ")"
+        ))
+        await session.commit()
+        return int(result.rowcount or 0)
+
+
 async def backfill_prune_dangling_comicseries() -> int:
     """Delete ComicSeries / ComicContainment rows whose comic_id
     refers to a comic that no longer exists. Defensive against past
