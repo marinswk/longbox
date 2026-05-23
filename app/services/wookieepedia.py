@@ -239,6 +239,24 @@ def _detect_oneshot_series(wikitext: str) -> Optional[tuple[str, str]]:
     return None
 
 
+def _detect_movie_adaptation_series(wikitext: str) -> Optional[tuple[str, str]]:
+    """If the article is categorised as a comic film adaptation, route
+    its series to the canonical Wookieepedia umbrella
+    `Star Wars Movie Adaptations`. Used as a fallback only — articles
+    that already declare a `series=` win.
+
+    The umbrella exists as a real Wookieepedia article, so saving
+    `series_article_id="Star Wars Movie Adaptations"` lets the series
+    page's "Pull issues automatically" action populate the
+    expected-issues list.
+    """
+    for m in _CATEGORY_RX.finditer(wikitext):
+        cat = m.group(1).strip().lower()
+        if cat == "comic film adaptations":
+            return "Star Wars Movie Adaptations", "Star Wars Movie Adaptations"
+    return None
+
+
 def _detect_epic_collection_subimprint(article_title: Optional[str]) -> Optional[tuple[str, str]]:
     """Return (display_series_name, source_id) for Marvel Epic
     Collection sub-imprints, else None.
@@ -1315,6 +1333,18 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     oneshot = _detect_oneshot_series(wikitext)
     if oneshot:
         series, series_article_id = oneshot
+    # Movie-adaptation graphic novels (e.g. the Original / Prequel /
+    # Sequel Trilogy GNs) often have an empty `series=` on their article
+    # infobox. Wookieepedia groups them all under the
+    # "Star Wars Movie Adaptations" umbrella, identified by the
+    # `Comic film adaptations` category. When series resolution has
+    # found nothing better, route them there so all movie-adaptation
+    # comics cluster together instead of each spawning a
+    # degenerate one-comic series named after the article title.
+    if not series:
+        film = _detect_movie_adaptation_series(wikitext)
+        if film:
+            series, series_article_id = film
     publisher = _first_line(fields.get("publisher"))
 
     # Trade collections list their contents either inside |issues= on the

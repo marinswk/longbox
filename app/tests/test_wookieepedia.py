@@ -11,6 +11,7 @@ from app.main import create_app
 from app.services import wookieepedia
 from app.services.wookieepedia import (
     _clean,
+    _detect_movie_adaptation_series,
     _detect_oneshot_series,
     _extract_contents_section,
     _find_infobox,
@@ -216,6 +217,29 @@ def test_find_infobox_recognises_book_template():
     fields = _find_infobox(wt)
     assert fields is not None
     assert fields["__template__"] == "Book"
+
+
+def test_detect_movie_adaptation_series_routes_to_umbrella():
+    """A graphic-novel article in the 'Comic film adaptations' category
+    (e.g. the Prequel / Original / Sequel Trilogy GNs) routes to the
+    canonical 'Star Wars Movie Adaptations' umbrella article so all
+    movie-adaptation comics cluster together."""
+    wt = (
+        "body\n"
+        "[[Category:Canon graphic novels]]\n"
+        "[[Category:Comic film adaptations]]\n"
+    )
+    assert _detect_movie_adaptation_series(wt) == (
+        "Star Wars Movie Adaptations",
+        "Star Wars Movie Adaptations",
+    )
+
+
+def test_detect_movie_adaptation_series_none_when_category_missing():
+    """Without the marker category, the umbrella fallback stays silent
+    so unrelated articles aren't pulled into the movie-adaptation series."""
+    wt = "body\n[[Category:Canon graphic novels]]\n"
+    assert _detect_movie_adaptation_series(wt) is None
 
 
 def test_looks_like_comic_book_article_accepts_comic_categories():
