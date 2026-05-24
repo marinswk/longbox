@@ -86,6 +86,14 @@ class Comic(SQLModel, table=True):
     description: Optional[str] = None
     cover_price_eur: Optional[float] = None
 
+    # JSON-encoded list of {"label": str, "url": str} entries describing
+    # the article's variant covers (single issues commonly ship with
+    # 10+ variants). Populated from Wookieepedia's ==Cover gallery==
+    # section at save / refresh time. Used as the menu the
+    # "add another copy" form draws from so a user picking the variant
+    # they own doesn't trigger an upstream fetch per copy.
+    cover_variants_json: Optional[str] = None
+
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -100,6 +108,11 @@ class Copy(SQLModel, table=True):
     notes: Optional[str] = None
     read_status: Optional[str] = Field(default=None, index=True)
     date_read: Optional[date] = None
+    # The specific variant cover this physical copy ships with. NULL
+    # means "standard cover" — the comic-detail view falls back to
+    # `Comic.cover_url_*` for rendering.
+    variant_name: Optional[str] = None
+    variant_cover_url: Optional[str] = None
 
 
 class Creator(SQLModel, table=True):

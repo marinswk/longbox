@@ -60,4 +60,12 @@ class LookupCandidate(BaseModel):
     # `concept_credits`). Empty for sources that don't expose them.
     concepts: list[str] = []
 
+    # Variant covers parsed from the source's cover-gallery section.
+    # Each entry is ``{"label": "Carbonite variant by X", "url": "https://..."}``.
+    # Single issues commonly carry 10+ variants. Sources that don't
+    # expose a gallery return an empty list. Persisted on the Comic
+    # as ``cover_variants_json`` so the add-copy form can offer the
+    # menu without re-fetching the source.
+    cover_variants: list[dict[str, str]] = []
+
     raw: dict[str, Any] = {}

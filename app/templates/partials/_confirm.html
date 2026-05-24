@@ -6,17 +6,60 @@
 
   <div class="mt-4 flex gap-4">
     {% if fields.cover_url_remote %}
-      <img src="{{ fields.cover_url_remote }}" alt="" class="h-40 w-28 flex-none rounded border-2 border-black object-cover" loading="lazy" />
+      <img id="confirm-cover-preview" src="{{ fields.cover_url_remote }}" alt="" class="h-40 w-28 flex-none rounded border-2 border-black object-cover" loading="lazy" />
     {% else %}
-      <div class="h-40 w-28 flex-none rounded border-2 border-black bg-gray-100"></div>
+      <div id="confirm-cover-preview" class="h-40 w-28 flex-none rounded border-2 border-black bg-gray-100"></div>
     {% endif %}
     <div class="text-xs text-gray-600">
       Source: <strong>{{ fields.source or '—' }}</strong>
+      {% if cover_variants %}
+        <p class="mt-2 text-gray-700">
+          {{ cover_variants|length }} variant cover{{ '' if cover_variants|length == 1 else 's' }}
+          available — pick the one you own below.
+        </p>
+      {% endif %}
     </div>
   </div>
 
-  <form class="mt-6 space-y-3"
+  {% if cover_variants %}
+  {# Variant picker: clicking a thumbnail rewrites the hidden
+     `cover_url_remote`, `variant_name`, `variant_cover_url` inputs in
+     the form below and swaps the big preview image. The "Standard"
+     tile re-selects the article's primary cover (no variant label).
+     Plain JS to match the project's no-Alpine convention. #}
+  <fieldset class="mt-4">
+    <legend class="text-xs font-semibold uppercase tracking-wide">Variant cover</legend>
+    <div id="variant-picker" class="mt-2 flex gap-2 overflow-x-auto pb-2">
+      <label class="lb-variant-tile group flex flex-none cursor-pointer flex-col items-center"
+             data-url="{{ fields.cover_url_remote or '' }}"
+             data-label="">
+        <input type="radio" name="lb_variant_choice" value="__default__" class="sr-only" checked />
+        {% if fields.cover_url_remote %}
+          <img src="{{ fields.cover_url_remote }}" alt="" class="h-24 w-16 rounded border-2 border-black object-cover transition group-[:has(:checked)]:ring-4 group-[:has(:checked)]:ring-crawl" loading="lazy" />
+        {% else %}
+          <div class="h-24 w-16 rounded border-2 border-black bg-gray-100"></div>
+        {% endif %}
+        <span class="mt-1 max-w-[6rem] truncate text-[10px] text-gray-700" title="Standard cover">Standard</span>
+      </label>
+      {% for v in cover_variants %}
+      <label class="lb-variant-tile group flex flex-none cursor-pointer flex-col items-center"
+             data-url="{{ v.url }}"
+             data-label="{{ v.label }}">
+        <input type="radio" name="lb_variant_choice" value="{{ loop.index }}" class="sr-only" />
+        <img src="{{ v.url }}" alt="" class="h-24 w-16 rounded border-2 border-black object-cover transition group-[:has(:checked)]:ring-4 group-[:has(:checked)]:ring-crawl" loading="lazy" />
+        <span class="mt-1 max-w-[6rem] truncate text-[10px] text-gray-700" title="{{ v.label }}">{{ v.label }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endif %}
+
+  <form id="confirm-form" class="mt-6 space-y-3"
         hx-post="/add/save" hx-target="#flow" hx-swap="innerHTML">
+    {# Hidden inputs the variant picker (above) rewrites on selection.
+       Both start blank so an unmodified save records "standard cover". #}
+    <input type="hidden" name="variant_name" value="" />
+    <input type="hidden" name="variant_cover_url" value="" />
     {% macro field(name, label, value, type='text', placeholder='') -%}
       <label class="block">
         <span class="text-xs font-semibold uppercase">{{ label }}</span>
@@ -68,4 +111,28 @@
       </button>
     </div>
   </form>
+
+  {% if cover_variants %}
+  <script>
+  (function () {
+    const picker = document.getElementById('variant-picker');
+    const form = document.getElementById('confirm-form');
+    if (!picker || !form) return;
+    const preview = document.getElementById('confirm-cover-preview');
+    const coverInput = form.querySelector('input[name="cover_url_remote"]');
+    const variantNameInput = form.querySelector('input[name="variant_name"]');
+    const variantUrlInput = form.querySelector('input[name="variant_cover_url"]');
+    picker.addEventListener('change', function (e) {
+      const tile = e.target.closest('.lb-variant-tile');
+      if (!tile) return;
+      const url = tile.dataset.url || '';
+      const label = tile.dataset.label || '';
+      if (coverInput) coverInput.value = url;
+      if (variantNameInput) variantNameInput.value = label;
+      if (variantUrlInput) variantUrlInput.value = label ? url : '';
+      if (preview && preview.tagName === 'IMG' && url) preview.src = url;
+    });
+  })();
+  </script>
+  {% endif %}
 </div>

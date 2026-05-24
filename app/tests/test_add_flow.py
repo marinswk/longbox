@@ -127,6 +127,91 @@ def test_save_creates_comic_and_copy(tmp_path, monkeypatch):
         assert match[0]["title"] == "Saga #1"
 
 
+def test_save_with_variant_persists_on_first_copy():
+    """The /add confirm picker writes the chosen variant into hidden
+    fields; /add/save must persist them on the freshly-created Copy
+    so the user sees their variant cover + label on /comic/{id}."""
+    isbn = "9780000000555"
+    with _client() as client:
+        r = client.post(
+            "/add/save",
+            data={
+                "title": "VAR Issue 1",
+                "isbn_13": isbn,
+                "variant_name": "Carbonite variant",
+                "variant_cover_url": "https://covers.example/wbh5-carbonite.jpg",
+            },
+        )
+        assert r.status_code == 200
+
+        comics = client.get("/api/comics", params={"limit": 500}).json()
+        comic_id = next(c["id"] for c in comics if c["isbn_13"] == isbn)
+        # The detail page renders the variant + thumbnail on the copy row.
+        page = client.get(f"/comic/{comic_id}").text
+        assert "Carbonite variant" in page
+        assert "wbh5-carbonite.jpg" in page
+
+
+def test_add_copy_form_records_variant_from_gallery_index():
+    """The add-copy form on /comic/{id} accepts a gallery index in
+    `variant_choice` and resolves it against Comic.cover_variants_json
+    server-side (no upstream re-fetch)."""
+    import json as _json
+    isbn = "9780000000556"
+    with _client() as client:
+        # Seed a comic with a cached gallery on it.
+        client.post(
+            "/add/save",
+            data={"title": "VAR Issue 2", "isbn_13": isbn},
+        )
+        comics = client.get("/api/comics", params={"limit": 500}).json()
+        comic_id = next(c["id"] for c in comics if c["isbn_13"] == isbn)
+
+        # Inject a known cached gallery so the test doesn't depend on
+        # upstream variants. Two entries: index 1 = McNiven, 2 = Carbonite.
+        import asyncio
+        from app.db import SessionLocal
+        from app.models import Comic
+        async def _seed_gallery():
+            async with SessionLocal() as s:
+                c = await s.get(Comic, comic_id)
+                c.cover_variants_json = _json.dumps([
+                    {"label": "McNiven cover", "url": "https://covers.example/mcniven.jpg"},
+                    {"label": "Carbonite variant", "url": "https://covers.example/carbonite.jpg"},
+                ])
+                s.add(c)
+                await s.commit()
+        asyncio.run(_seed_gallery())
+
+        # Pick variant 2 (Carbonite) via the add-copy form.
+        r = client.post(
+            f"/comic/{comic_id}/copies",
+            data={"variant_choice": "2"},
+        )
+        assert r.status_code == 200
+        # The resulting copies-section partial shows the carbonite label + url.
+        assert "Carbonite variant" in r.text
+        assert "covers.example/carbonite.jpg" in r.text
+
+
+def test_add_copy_form_other_variant_uses_free_text():
+    """`variant_choice=__other__` records `variant_name_other` as the
+    variant label, leaves variant_cover_url NULL — user can edit it later."""
+    isbn = "9780000000557"
+    with _client() as client:
+        client.post("/add/save", data={"title": "VAR Issue 3", "isbn_13": isbn})
+        comics = client.get("/api/comics", params={"limit": 500}).json()
+        comic_id = next(c["id"] for c in comics if c["isbn_13"] == isbn)
+
+        r = client.post(
+            f"/comic/{comic_id}/copies",
+            data={"variant_choice": "__other__",
+                  "variant_name_other": "SDCC 2025 exclusive"},
+        )
+        assert r.status_code == 200
+        assert "SDCC 2025 exclusive" in r.text
+
+
 def test_confirm_flags_duplicate_after_save():
     isbn = "9780000000444"
     with _client() as client:

@@ -834,9 +834,21 @@ async def add_confirm(
     from app.services.fandoms import list_fandoms
     fandoms = await list_fandoms(session)
     current_fandom = "star wars" if fields["source"] == "wookieepedia" else None
+    # Pull the cached candidate so the confirm template can offer the
+    # variant-cover picker (Wookieepedia's ==Cover gallery==). Single
+    # issues commonly have 10+ variants — letting the user pick now
+    # avoids manual cover-URL pasting later. Falls back to an empty
+    # list when the source/candidate doesn't expose a gallery.
+    candidate = await _refetch_candidate(source, source_id)
+    cover_variants = (candidate.cover_variants if candidate else [])
     return templates.TemplateResponse(
         request, "partials/_confirm.html",
-        {"fields": fields, "fandoms": fandoms, "current_fandom": current_fandom},
+        {
+            "fields": fields,
+            "fandoms": fandoms,
+            "current_fandom": current_fandom,
+            "cover_variants": cover_variants,
+        },
     )
 
 
@@ -864,6 +876,8 @@ async def add_save(
     source_id: str = Form(""),
     fandom: str = Form(""),
     fandom_new: str = Form(""),
+    variant_name: str = Form(""),
+    variant_cover_url: str = Form(""),
 ) -> HTMLResponse:
     # Resolve the picker's two inputs: free-text wins over the dropdown,
     # `__NEW__` sentinel from the dropdown means "use fandom_new".
@@ -945,6 +959,8 @@ async def add_save(
                 await _persist_creators(session, comic.id, candidate.creators)
             if candidate.story_arcs:
                 await _persist_arcs(session, comic.id, candidate.story_arcs)
+            # `_backfill_metadata` handles `cover_variants_json` too —
+            # keeps save and refresh symmetric.
             await _backfill_metadata(session, comic, candidate)
 
         # Auto-tag based on source + Wookieepedia's canon flag.
@@ -989,7 +1005,13 @@ async def add_save(
     except ValueError:
         price = None
 
-    copy = Copy(comic_id=comic.id, price_paid_eur=price, purchase_date=datetime.now(UTC).date())
+    copy = Copy(
+        comic_id=comic.id,
+        price_paid_eur=price,
+        purchase_date=datetime.now(UTC).date(),
+        variant_name=variant_name or None,
+        variant_cover_url=variant_cover_url or None,
+    )
     session.add(copy)
     await session.commit()
 
@@ -1133,6 +1155,16 @@ async def _backfill_metadata(
     # import) the save flow would skip them silently. Forcing them keeps
     # save and refresh symmetric.
     SOURCE_ONLY = {"collected_issues", "format", "language", "timeline", "era", "canon"}
+
+    # Variant cover gallery is upstream-derived too — keep it in sync
+    # with the candidate. Serialize the list to a JSON string column.
+    # A refresh therefore picks up newly-added variants on Wookieepedia.
+    if candidate.cover_variants:
+        import json as _json
+        new_json = _json.dumps(candidate.cover_variants)
+        if comic.cover_variants_json != new_json:
+            comic.cover_variants_json = new_json
+            changed = True
 
     for attr, value in field_map.items():
         if value is None:

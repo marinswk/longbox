@@ -1188,6 +1188,51 @@ def _strip_cover_gallery_sections(wikitext: str) -> str:
         wikitext = wikitext[: m.start()] + wikitext[end:]
 
 
+# A `==Cover gallery==` body holds `<gallery>...</gallery>` blocks
+# whose lines are `File:NNN.ext|caption wikitext`. The caption may
+# contain wikilinks and emphasis (`''McNiven'' cover by [[Steve McNiven]]`)
+# which `_clean` flattens. Order matters — we preserve the gallery's
+# top-to-bottom order so the first entry is what the article author
+# considers the "primary" variant.
+_GALLERY_LINE_RX = re.compile(r"^\s*File:([^\s|]+)\s*(?:\|(.*))?$")
+
+
+def _extract_cover_gallery(wikitext: str) -> list[dict[str, str]]:
+    """Return ``[{"label", "filename"}, ...]`` for every entry in the
+    article's ``==Cover gallery==`` / ``==Covers==`` sections.
+
+    Labels come from each gallery line's caption — wikilinks /
+    emphasis stripped via `_clean`. Filenames stay raw so callers
+    can resolve them to full URLs via `_resolve_image_url`. An
+    article with no cover gallery section returns ``[]``.
+    """
+    out: list[dict[str, str]] = []
+    # Walk every cover-gallery section in the article and pull each
+    # File: line out of its <gallery> blocks.
+    pos = 0
+    while True:
+        m = _COVER_GALLERY_HEADER.search(wikitext, pos)
+        if not m:
+            break
+        rest = wikitext[m.end():]
+        nxt = _NEXT_HEADING_OR_TABLE_END.search(rest)
+        section_end = m.end() + (nxt.start() if nxt else len(rest))
+        section = wikitext[m.end():section_end]
+        pos = section_end
+        # Pull every <gallery>...</gallery> inside the section.
+        for gm in re.finditer(r"<gallery[^>]*>(.*?)</gallery>", section, re.DOTALL | re.IGNORECASE):
+            for line in gm.group(1).splitlines():
+                hit = _GALLERY_LINE_RX.match(line)
+                if not hit:
+                    continue
+                filename = hit.group(1).strip()
+                caption_raw = (hit.group(2) or "").strip()
+                label = _clean(caption_raw) if caption_raw else filename
+                if filename:
+                    out.append({"label": label or filename, "filename": filename})
+    return out
+
+
 def _split_multivalue(raw: str) -> list[str]:
     """Wookieepedia uses bullets, newlines, and the rare comma to list
     multiple values inside one infobox field. _clean already stripped the
@@ -1413,6 +1458,24 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
 
     characters = _extract_appearances_characters(wikitext)
 
+    # Variant covers from the article's ==Cover gallery==. Resolve each
+    # File:NNN to a full URL in parallel so even an issue with 17
+    # variants (e.g. WOTBH 5) doesn't serially block on Wookieepedia.
+    # All image URL lookups go through `_resolve_image_url` which
+    # hits MetadataCache, so subsequent loads are free.
+    cover_variants: list[dict[str, str]] = []
+    gallery = _extract_cover_gallery(wikitext)
+    if gallery:
+        import asyncio as _asyncio
+        urls = await _asyncio.gather(
+            *(_resolve_image_url(entry["filename"]) for entry in gallery),
+            return_exceptions=True,
+        )
+        for entry, url in zip(gallery, urls):
+            if isinstance(url, Exception) or not url:
+                continue
+            cover_variants.append({"label": entry["label"], "url": url})
+
     return LookupCandidate(
         source=SOURCE,
         source_id=title,  # article title is the natural id
@@ -1437,6 +1500,7 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
         canon=canon,
         story_arcs=arcs,
         characters=characters,
+        cover_variants=cover_variants,
         raw=fields,
     )
 

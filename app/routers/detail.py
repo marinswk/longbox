@@ -238,6 +238,21 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
         seen_series_ids.add(s.id)
         series_rows.append((s, bool(is_primary)))
 
+    # Parse the cached variant cover gallery so the add/edit-copy
+    # forms can render a dropdown without re-fetching the source.
+    # Falls back to an empty list when the comic has no gallery
+    # (legacy rows, non-wookieepedia sources, articles without a
+    # ==Cover gallery== section).
+    import json as _json
+    cover_variants: list[dict] = []
+    if comic.cover_variants_json:
+        try:
+            parsed_variants = _json.loads(comic.cover_variants_json)
+            if isinstance(parsed_variants, list):
+                cover_variants = [v for v in parsed_variants if isinstance(v, dict)]
+        except (TypeError, ValueError):
+            cover_variants = []
+
     return {
         "comic": comic, "series": series, "publisher": publisher,
         "copies": copies, "tags": tags, "comic_id": comic_id,
@@ -247,6 +262,7 @@ async def _load(session: AsyncSession, comic_id: int) -> dict:
         "contains_children": contains_children,
         "covered_by": covered_by,
         "series_rows": series_rows,
+        "cover_variants": cover_variants,
     }
 
 
@@ -550,6 +566,40 @@ async def comic_delete(comic_id: int, session: SessionDep) -> Response:
     return Response(status_code=204, headers={"HX-Redirect": "/library"})
 
 
+def _resolve_variant(
+    variant_choice: str,
+    variant_name_other: str,
+    cover_variants_json: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Map the add/edit-copy form's variant inputs to the (name, url)
+    pair we store on Copy.
+
+    `variant_choice` is either ``""`` (= standard cover, no variant),
+    ``"__other__"`` (= use the free-text override `variant_name_other`,
+    cover URL stays NULL — user can edit later), or the numeric index
+    (1-based) into the comic's cached `cover_variants_json` list.
+    """
+    import json as _json
+    if not variant_choice or variant_choice == "__standard__":
+        return None, None
+    if variant_choice == "__other__":
+        return (variant_name_other.strip() or None), None
+    try:
+        idx = int(variant_choice) - 1
+    except (TypeError, ValueError):
+        return None, None
+    if idx < 0 or not cover_variants_json:
+        return None, None
+    try:
+        variants = _json.loads(cover_variants_json) or []
+    except (TypeError, ValueError):
+        return None, None
+    if idx >= len(variants):
+        return None, None
+    entry = variants[idx]
+    return entry.get("label") or None, entry.get("url") or None
+
+
 @router.post("/comic/{comic_id}/copies", response_class=HTMLResponse)
 async def add_copy(
     comic_id: int,
@@ -561,10 +611,15 @@ async def add_copy(
     purchase_date: str = Form(""),
     read_status: str = Form(""),
     notes: str = Form(""),
+    variant_choice: str = Form(""),
+    variant_name_other: str = Form(""),
 ) -> HTMLResponse:
     comic = await session.get(Comic, comic_id)
     if comic is None:
         raise HTTPException(status_code=404, detail="comic not found")
+    v_name, v_url = _resolve_variant(
+        variant_choice, variant_name_other, comic.cover_variants_json
+    )
     copy = Copy(
         comic_id=comic_id,
         condition=condition or None,
@@ -573,6 +628,8 @@ async def add_copy(
         purchase_date=_parse_date(purchase_date),
         read_status=read_status or None,
         notes=notes or None,
+        variant_name=v_name,
+        variant_cover_url=v_url,
     )
     session.add(copy)
     await session.commit()
@@ -593,6 +650,8 @@ async def edit_copy(
     read_status: str = Form(""),
     date_read: str = Form(""),
     notes: str = Form(""),
+    variant_choice: str = Form(""),
+    variant_name_other: str = Form(""),
 ) -> HTMLResponse:
     copy = await session.get(Copy, copy_id)
     if copy is None or copy.comic_id != comic_id:
@@ -604,6 +663,17 @@ async def edit_copy(
     copy.read_status = read_status or None
     copy.date_read = _parse_date(date_read)
     copy.notes = notes or None
+    # Only touch variant fields when the form actually sent a choice
+    # (the edit form may have been submitted before variant UI rolled
+    # out — leaving variant_choice="" preserves the existing value).
+    if variant_choice:
+        comic = await session.get(Comic, comic_id)
+        v_name, v_url = _resolve_variant(
+            variant_choice, variant_name_other,
+            comic.cover_variants_json if comic else None,
+        )
+        copy.variant_name = v_name
+        copy.variant_cover_url = v_url
     session.add(copy)
     await session.commit()
     ctx = await _load(session, comic_id)

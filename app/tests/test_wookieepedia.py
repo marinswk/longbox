@@ -14,6 +14,7 @@ from app.services.wookieepedia import (
     _detect_movie_adaptation_series,
     _detect_oneshot_series,
     _extract_contents_section,
+    _extract_cover_gallery,
     _find_infobox,
     _looks_like_comic_book_article,
     _parse_date,
@@ -289,6 +290,40 @@ def test_looks_like_comic_book_article_rejects_prose_novel():
         "[[Category:Hardcover books]]\n"
     )
     assert _looks_like_comic_book_article(wt) is False
+
+
+def test_extract_cover_gallery_returns_label_and_filename_for_each_entry():
+    """Pull every File:NNN line out of every <gallery> inside every
+    ==Cover gallery== section. Captions get _clean'd (wikilinks
+    flattened) so the label is human-readable."""
+    wt = (
+        "lead paragraph\n"
+        "==Publisher's summary==\n"
+        "blah\n"
+        "==Cover gallery==\n"
+        "<gallery>\n"
+        "File:WOTBH5-cover.jpg|[[Steve McNiven]] cover\n"
+        "File:WBH5McNivenCarbonite.jpg|Carbonite variant\n"
+        "File:WBH5Cassaday.jpg|Trading Card variant by [[John Cassaday]]\n"
+        "</gallery>\n"
+        "==Notes==\n"
+        "footnotes\n"
+    )
+    out = _extract_cover_gallery(wt)
+    assert [v["filename"] for v in out] == [
+        "WOTBH5-cover.jpg",
+        "WBH5McNivenCarbonite.jpg",
+        "WBH5Cassaday.jpg",
+    ]
+    assert out[0]["label"] == "Steve McNiven cover"
+    assert out[1]["label"] == "Carbonite variant"
+    assert out[2]["label"] == "Trading Card variant by John Cassaday"
+
+
+def test_extract_cover_gallery_returns_empty_when_section_missing():
+    """Trades / pages without a cover gallery section return []."""
+    wt = "lead\n==Publisher's summary==\nblah\n==Notes==\nfoot\n"
+    assert _extract_cover_gallery(wt) == []
 
 
 @respx.mock

@@ -16,12 +16,35 @@
     </div>
   </div>
 
+  {# Reusable variant selector. `current_choice` is the radio value to
+     pre-select when editing an existing copy; "" = standard. #}
+  {% macro variant_selector(current_choice='', current_other='') -%}
+    {% if cover_variants or current_other %}
+      <label class="text-xs sm:col-span-2">Variant cover
+        <select name="variant_choice"
+                class="mt-0.5 w-full rounded border-2 border-black px-2 py-1.5">
+          <option value="__standard__" {% if not current_choice or current_choice == '__standard__' %}selected{% endif %}>Standard cover</option>
+          {% for v in cover_variants %}
+            <option value="{{ loop.index }}" {% if current_choice == loop.index|string %}selected{% endif %}>{{ v.label }}</option>
+          {% endfor %}
+          <option value="__other__" {% if current_choice == '__other__' %}selected{% endif %}>Other (type below) …</option>
+        </select>
+      </label>
+      <label class="text-xs sm:col-span-2">Variant name (free-text, used when "Other" picked)
+        <input type="text" name="variant_name_other" value="{{ current_other or '' }}"
+               placeholder="e.g. SDCC exclusive"
+               class="mt-0.5 w-full rounded border-2 border-black px-2 py-1.5" />
+      </label>
+    {% endif %}
+  {%- endmacro %}
+
   {% if copies %}
   <div class="mt-4 overflow-x-auto">
     <table class="lb-stack-mobile w-full text-sm">
       <thead>
         <tr class="border-b-2 border-black text-left text-xs font-semibold uppercase">
           <th class="py-2 pr-3">#</th>
+          <th class="py-2 pr-3">Variant</th>
           <th class="py-2 pr-3">Condition</th>
           <th class="py-2 pr-3">Location</th>
           <th class="py-2 pr-3">Paid</th>
@@ -34,6 +57,19 @@
         {% for cp in copies %}
         <tr class="border-b border-gray-200 align-top">
           <td data-label="#" class="py-2 pr-3 font-mono text-xs">{{ loop.index }}</td>
+          <td data-label="Variant" class="py-2 pr-3">
+            {% if cp.variant_cover_url or cp.variant_name %}
+              <div class="flex items-center gap-2">
+                {% if cp.variant_cover_url %}
+                  <img src="{{ cp.variant_cover_url }}" alt=""
+                       class="h-12 w-8 flex-none rounded border border-black object-cover" loading="lazy" />
+                {% endif %}
+                <span class="text-xs">{{ cp.variant_name or '—' }}</span>
+              </div>
+            {% else %}
+              <span class="text-xs text-gray-500">Standard</span>
+            {% endif %}
+          </td>
           <td data-label="Condition" class="py-2 pr-3">{{ cp.condition or '—' }}</td>
           <td data-label="Location" class="py-2 pr-3">{{ cp.storage_location or '—' }}</td>
           <td data-label="Paid" class="py-2 pr-3">{% if cp.price_paid_eur is not none %}€{{ '%.2f'|format(cp.price_paid_eur) }}{% else %}—{% endif %}</td>
@@ -74,6 +110,28 @@
                            class="mt-0.5 w-full rounded border border-black px-2 py-1" />
                   </label>
                 </div>
+                {# Pre-select the current variant: if its label matches a
+                   gallery entry, pick that index; otherwise route to
+                   "Other" with the free-text override. Done in Jinja
+                   to keep the form purely server-rendered. #}
+                {% set cur_choice = '' %}
+                {% set cur_other = '' %}
+                {% if cp.variant_name %}
+                  {% set ns = namespace(found=false, idx=0) %}
+                  {% for v in cover_variants %}
+                    {% if not ns.found and v.label == cp.variant_name %}
+                      {% set ns.found = true %}
+                      {% set ns.idx = loop.index %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if ns.found %}
+                    {% set cur_choice = ns.idx|string %}
+                  {% else %}
+                    {% set cur_choice = '__other__' %}
+                    {% set cur_other = cp.variant_name %}
+                  {% endif %}
+                {% endif %}
+                {{ variant_selector(cur_choice, cur_other) }}
                 <label class="block text-xs">Notes
                   <textarea name="notes" rows="2"
                             class="mt-0.5 w-full rounded border border-black px-2 py-1">{{ cp.notes or '' }}</textarea>
@@ -127,6 +185,7 @@
           {% endfor %}
         </select>
       </label>
+      {{ variant_selector() }}
       <label class="text-xs sm:col-span-2">Notes
         <textarea name="notes" rows="2"
                   class="mt-0.5 w-full rounded border-2 border-black px-2 py-1.5"></textarea>
