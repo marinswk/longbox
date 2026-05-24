@@ -26,10 +26,16 @@
      `cover_url_remote`, `variant_name`, `variant_cover_url` inputs in
      the form below and swaps the big preview image. The "Standard"
      tile re-selects the article's primary cover (no variant label).
-     Plain JS to match the project's no-Alpine convention. #}
-  <fieldset class="mt-4">
+     Plain JS to match the project's no-Alpine convention.
+
+     `min-w-0` on the fieldset and `min-w-0 max-w-full` on the inner
+     flex container are required so `overflow-x-auto` actually clips
+     and scrolls — without them, the natural width of N flex-none
+     tiles pushes the picker past the panel and the WHOLE PAGE gets
+     a horizontal scrollbar. #}
+  <fieldset class="mt-4 min-w-0">
     <legend class="text-xs font-semibold uppercase tracking-wide">Variant cover</legend>
-    <div id="variant-picker" class="mt-2 flex gap-2 overflow-x-auto pb-2">
+    <div id="variant-picker" class="mt-2 flex gap-2 overflow-x-auto pb-2 min-w-0 max-w-full">
       <label class="lb-variant-tile group flex flex-none cursor-pointer flex-col items-center"
              data-url="{{ fields.cover_url_remote or '' }}"
              data-label="">
