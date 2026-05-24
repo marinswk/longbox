@@ -12,4 +12,4 @@ Surfaced on the /admin page and in the /health endpoint's JSON.
 
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"

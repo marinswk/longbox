@@ -577,6 +577,16 @@ async def _attach_inferred_series(comic_id: int) -> None:
                 continue
             if existing.id in existing_link_ids:
                 continue
+            # Synthetic umbrella series (One-shots / FCBD / Graphic Novels
+            # buckets — `source_id` starts with `Category:`) shouldn't get
+            # propagated up to a containing trade. The one-shot itself
+            # already lives under the umbrella; bonus-linking the trade
+            # that collects it just pollutes the umbrella's series page
+            # with unrelated TPBs / Omnibuses. The umbrella's primary
+            # purpose is grouping standalone one-shots; trades have
+            # their own series.
+            if existing.source_id and existing.source_id.startswith("Category:"):
+                continue
             # Final defensive check — the merge branch above may have
             # just inserted this link by copying it from the guess
             # row, and our cached `existing_link_ids` set wouldn't

@@ -30,6 +30,7 @@ async def lifespan(_app: FastAPI):
         backfill_prune_empty_inferred_series,
         backfill_single_issue_format,
         backfill_strip_bogus_movie_adaptation_links,
+        backfill_strip_umbrella_links_from_trades,
         backfill_strip_multiline_names, backfill_wookieepedia_fandom,
     )
 
@@ -69,6 +70,11 @@ async def lifespan(_app: FastAPI):
     # catches up legacy omnibuses / TPBs saved before save-time
     # inference landed.
     await backfill_inferred_series_from_collected_issues()
+    # Drop ComicSeries links between synthetic umbrella series
+    # (One-shots / FCBD / Graphic Novels — `source_id` LIKE
+    # 'Category:%') and trades that happened to collect a one-shot.
+    # The inferrer no longer creates these; this is a one-time fix.
+    await backfill_strip_umbrella_links_from_trades()
     # Drop ComicSeries links to "Star Wars Movie Adaptations" that
     # were auto-attached to comics whose titles don't actually denote
     # a movie adaptation (e.g. Epic Collections that happened to

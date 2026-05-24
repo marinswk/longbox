@@ -29,6 +29,7 @@ from app.services.fandoms import (
     backfill_merge_duplicate_series,
     backfill_single_issue_format,
     backfill_strip_bogus_movie_adaptation_links,
+    backfill_strip_umbrella_links_from_trades,
 )
 from app.models import ComicSeries
 from app.services.schemas import LookupCandidate
@@ -362,6 +363,73 @@ def test_backfill_single_issue_format_fills_missing_singles_only():
 
     # Idempotent.
     again = asyncio.run(backfill_single_issue_format())
+    assert again == 0
+
+
+def test_strip_umbrella_links_removes_trades_only():
+    """Category-backed umbrella series (One-shots, FCBD, Graphic
+    Novels) should only contain actual one-shots / specials. The
+    inferrer used to drag every trade collecting one such issue into
+    the umbrella too; this sweep drops those bogus links while
+    leaving the standalone one-shots in place."""
+    async def _seed():
+        async with SessionLocal() as session:
+            umbrella = Series(
+                name="UL Star Wars — One-shots",
+                source="wookieepedia",
+                source_id="Category:Canon one-shot comics",
+            )
+            tpb_series = Series(name="UL Some TPB Series")
+            session.add_all([umbrella, tpb_series])
+            await session.flush()
+
+            # A real one-shot — primary series IS the umbrella.
+            oneshot = Comic(
+                title="UL Revelations 1",
+                series_id=umbrella.id,
+                isbn_13="9799700000001",
+            )
+            # A trade that collects that one-shot — primary series is
+            # its own row; the bogus link is to the umbrella.
+            trade = Comic(
+                title="UL Big Omnibus Vol. 1",
+                series_id=tpb_series.id,
+                isbn_13="9799700000002",
+                collected_issues="UL Revelations 1",
+            )
+            session.add_all([oneshot, trade])
+            await session.flush()
+
+            session.add_all([
+                # One-shot's primary link to the umbrella — must SURVIVE.
+                ComicSeries(comic_id=oneshot.id, series_id=umbrella.id, is_primary=True),
+                # Trade's primary link to its own series — must SURVIVE.
+                ComicSeries(comic_id=trade.id, series_id=tpb_series.id, is_primary=True),
+                # Trade's stray non-primary link to the umbrella — must GO.
+                ComicSeries(comic_id=trade.id, series_id=umbrella.id, is_primary=False),
+            ])
+            await session.commit()
+            return umbrella.id, oneshot.id, trade.id
+
+    umbrella_id, oneshot_id, trade_id = asyncio.run(_seed())
+
+    n = asyncio.run(backfill_strip_umbrella_links_from_trades())
+    assert n == 1
+
+    async def _check():
+        async with SessionLocal() as session:
+            rows = (await session.exec(
+                select(ComicSeries.comic_id, ComicSeries.is_primary)
+                .where(ComicSeries.series_id == umbrella_id)
+            )).all()
+            return rows
+    rows = asyncio.run(_check())
+    comic_ids = {r[0] for r in rows}
+    assert oneshot_id in comic_ids  # standalone one-shot still linked
+    assert trade_id not in comic_ids  # trade's stray link gone
+
+    # Idempotent.
+    again = asyncio.run(backfill_strip_umbrella_links_from_trades())
     assert again == 0
 
 

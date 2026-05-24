@@ -297,6 +297,42 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     return total
 
 
+async def backfill_strip_umbrella_links_from_trades() -> int:
+    """Drop ComicSeries links between a synthetic umbrella series
+    (One-shots / FCBD / Graphic Novels buckets — `source_id` starts
+    with `Category:`) and any comic that's a trade collection
+    (`collected_issues` non-empty). Idempotent — no-op once the DB
+    is clean.
+
+    `_attach_inferred_series` previously auto-attached a containing
+    trade to every umbrella series its contained issues belonged to.
+    Result: an Epic Collection that happens to collect a one-shot
+    ended up as a multi-series member of "Star Wars — One-shots",
+    polluting the umbrella's series page with unrelated TPBs and
+    Omnibuses.
+
+    Only non-primary links are removed — defensive against the
+    impossible case where a trade somehow has an umbrella series as
+    its PRIMARY series_id (the inferrer never does that, but if a
+    user did it manually we don't want to silently undo their work).
+    """
+    from sqlalchemy import text
+    async with SessionLocal() as session:
+        result = await session.exec(text(
+            "DELETE FROM comicseries "
+            "WHERE is_primary = 0 "
+            "  AND series_id IN ("
+            "    SELECT id FROM series WHERE source_id LIKE 'Category:%'"
+            "  ) "
+            "  AND comic_id IN ("
+            "    SELECT id FROM comic "
+            "    WHERE collected_issues IS NOT NULL AND collected_issues != ''"
+            "  )"
+        ))
+        await session.commit()
+        return int(result.rowcount or 0)
+
+
 async def backfill_single_issue_format() -> int:
     """Set `format='single issue'` on every wookieepedia-sourced Comic
     whose format is NULL AND that lacks the two trade markers (an
