@@ -1384,12 +1384,21 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
 
     # Wookieepedia's infobox uses `media type` for the binding kind ("Trade
     # paperback", "Hardcover", "Single issue", "Comic book", "Omnibus", …).
+    # `{{ComicBook}}` and `{{GraphicNovel}}` articles almost never carry
+    # this field, so fall back to a sensible default by template kind
+    # rather than leaving the user staring at an empty Format column.
     fmt = (
         fields.get("media type")
         or fields.get("format")
         or fields.get("type")
         or None
     )
+    if fmt is None:
+        tpl = fields.get("__template__", "").lower()
+        if tpl == "comicbook":
+            fmt = "single issue"
+        elif tpl == "graphicnovel":
+            fmt = "graphic novel"
     language = fields.get("language") or None
     timeline = fields.get("timeline") or None
     era = fields.get("era") or None

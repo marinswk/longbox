@@ -291,6 +291,58 @@ def test_looks_like_comic_book_article_rejects_prose_novel():
     assert _looks_like_comic_book_article(wt) is False
 
 
+@respx.mock
+def test_comicbook_template_defaults_format_to_single_issue():
+    """`{{ComicBook}}` infoboxes rarely carry `media type=` upstream.
+    Without a per-template default, single-issue imports landed with
+    `format=None` and an empty Format column on /comic/{id}."""
+    parse = {"parse": {"title": "SI 5", "wikitext": {"*": (
+        "{{Top|rwm|can}}\n"
+        "{{ComicBook\n"
+        "|title=''SI 5''\n"
+        "|writer=[[Someone]]\n"
+        "|publisher=[[Marvel Comics]]\n"
+        "|series=''[[Some Series]]''\n"
+        "|issue=5 of 5\n"
+        "}}\n"
+    )}}}
+
+    def _route(request: httpx.Request) -> httpx.Response:
+        qs = parse_qs(urlparse(str(request.url)).query)
+        if qs.get("action", [None])[0] == "parse":
+            return httpx.Response(200, json=parse)
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with TestClient(create_app()):
+        c = asyncio.run(wookieepedia.get_article("SI 5"))
+    assert c is not None
+    assert c.format == "single issue"
+
+
+@respx.mock
+def test_graphicnovel_template_defaults_format_to_graphic_novel():
+    """Mirrors the ComicBook default — `{{GraphicNovel}}` articles
+    without `media type=` should still produce a meaningful format."""
+    parse = {"parse": {"title": "GN", "wikitext": {"*": (
+        "{{Top|rwm|can}}\n"
+        "{{GraphicNovel\n"
+        "|title=''GN''\n"
+        "|publisher=[[Dark Horse Comics]]\n"
+        "|isbn=9799000000001\n"
+        "}}\n"
+    )}}}
+
+    def _route(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=parse)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with TestClient(create_app()):
+        c = asyncio.run(wookieepedia.get_article("GN"))
+    assert c is not None
+    assert c.format == "graphic novel"
+
+
 def test_find_infobox_recognises_comicstory():
     """{{ComicStory}} infoboxes are parsed so series inference can read
     the `series=` field of a short story collected inside a trade."""

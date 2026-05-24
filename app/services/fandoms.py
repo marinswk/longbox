@@ -297,6 +297,32 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     return total
 
 
+async def backfill_single_issue_format() -> int:
+    """Set `format='single issue'` on every wookieepedia-sourced Comic
+    whose format is NULL AND that lacks the two trade markers (an
+    ISBN-13 and a non-empty collected_issues blob). Idempotent —
+    no-op once every legacy row has a format.
+
+    Single issues on Wookieepedia use `{{ComicBook}}` which lacks a
+    `media type=` field, so before the per-template default landed,
+    every imported single comic ended up with `format=NULL`. The
+    "no ISBN AND no contents list" filter avoids touching trades
+    that legitimately have no `media type` set upstream (extremely
+    rare, but cheap to be safe).
+    """
+    from sqlalchemy import text
+    async with SessionLocal() as session:
+        result = await session.exec(text(
+            "UPDATE comic SET format = 'single issue' "
+            "WHERE source = 'wookieepedia' "
+            "  AND format IS NULL "
+            "  AND (isbn_13 IS NULL OR isbn_13 = '') "
+            "  AND (collected_issues IS NULL OR collected_issues = '')"
+        ))
+        await session.commit()
+        return int(result.rowcount or 0)
+
+
 async def backfill_strip_bogus_movie_adaptation_links() -> int:
     """Drop ComicSeries links to a series named `Star Wars Movie
     Adaptations` from comics whose own title doesn't look like a movie

@@ -27,6 +27,7 @@ from app.main import create_app
 from app.models import Comic, Publisher, Series
 from app.services.fandoms import (
     backfill_merge_duplicate_series,
+    backfill_single_issue_format,
     backfill_strip_bogus_movie_adaptation_links,
 )
 from app.models import ComicSeries
@@ -290,6 +291,77 @@ def test_strip_bogus_movie_adaptation_links_removes_unrelated_comics():
 
     # Idempotent.
     again = asyncio.run(backfill_strip_bogus_movie_adaptation_links())
+    assert again == 0
+
+
+def test_backfill_single_issue_format_fills_missing_singles_only():
+    """Wookieepedia singles imported before the per-template default
+    have format=NULL. The backfill flips them to 'single issue' while
+    leaving trades (ISBN or collected_issues populated) and
+    non-wookieepedia rows untouched."""
+    with _client():
+        pass
+
+    async def _seed():
+        async with SessionLocal() as session:
+            # 3 wookieepedia singles with no format, ISBN, or contents.
+            single1 = Comic(title="SI Singles A", source="wookieepedia",
+                            source_id="SI_A", isbn_13="9799600000001")
+            # Make this one a TRUE single (no ISBN) — overwrite below.
+            single2 = Comic(title="SI Singles B", source="wookieepedia",
+                            source_id="SI_B")
+            single3 = Comic(title="SI Singles C", source="wookieepedia",
+                            source_id="SI_C")
+            # A trade (ISBN-13 present): must NOT be touched.
+            trade = Comic(title="SI Trade", source="wookieepedia",
+                          source_id="SI_Trade", isbn_13="9799600000099")
+            # A trade with no ISBN but with collected_issues: must NOT be touched.
+            trade2 = Comic(title="SI Trade Collected", source="wookieepedia",
+                           source_id="SI_TC", collected_issues="Foo 1\nFoo 2")
+            # A non-wookieepedia row with no format: must NOT be touched.
+            non_wk = Comic(title="SI Non-WK", source="openlibrary",
+                           source_id="X")
+            # An already-formatted single: must NOT be touched.
+            done = Comic(title="SI Already", source="wookieepedia",
+                         source_id="SI_Done", format="trade paperback")
+            session.add_all([single1, single2, single3, trade, trade2, non_wk, done])
+            await session.flush()
+            # Now scrub single1's ISBN so it counts as a true single.
+            single1.isbn_13 = None
+            session.add(single1)
+            await session.commit()
+            return {
+                "singles": [single1.id, single2.id, single3.id],
+                "trade": trade.id,
+                "trade2": trade2.id,
+                "non_wk": non_wk.id,
+                "done": done.id,
+            }
+    ids = asyncio.run(_seed())
+
+    n = asyncio.run(backfill_single_issue_format())
+    assert n == 3
+
+    async def _check():
+        async with SessionLocal() as session:
+            out = {}
+            for sid in ids["singles"]:
+                out[sid] = (await session.get(Comic, sid)).format
+            out["trade"] = (await session.get(Comic, ids["trade"])).format
+            out["trade2"] = (await session.get(Comic, ids["trade2"])).format
+            out["non_wk"] = (await session.get(Comic, ids["non_wk"])).format
+            out["done"] = (await session.get(Comic, ids["done"])).format
+            return out
+    fmts = asyncio.run(_check())
+    for sid in ids["singles"]:
+        assert fmts[sid] == "single issue", f"single {sid} not flipped"
+    assert fmts["trade"] is None
+    assert fmts["trade2"] is None
+    assert fmts["non_wk"] is None
+    assert fmts["done"] == "trade paperback"
+
+    # Idempotent.
+    again = asyncio.run(backfill_single_issue_format())
     assert again == 0
 
 

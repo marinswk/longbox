@@ -28,6 +28,7 @@ async def lifespan(_app: FastAPI):
         backfill_merge_duplicate_series, backfill_normalize_format,
         backfill_prune_dangling_comicseries,
         backfill_prune_empty_inferred_series,
+        backfill_single_issue_format,
         backfill_strip_bogus_movie_adaptation_links,
         backfill_strip_multiline_names, backfill_wookieepedia_fandom,
     )
@@ -43,6 +44,11 @@ async def lifespan(_app: FastAPI):
     # Lowercase every legacy `Comic.format` value so the library facet
     # chips collapse cleanly. Idempotent.
     await backfill_normalize_format()
+    # Default `format='single issue'` on wookieepedia-sourced comics
+    # that lack a format AND lack any trade marker (ISBN / contents).
+    # Catches up legacy ComicBook-infobox imports saved before the
+    # per-template default landed. Idempotent.
+    await backfill_single_issue_format()
     # Strip embedded newlines from any Series/Comic/Publisher name that
     # got saved with multi-value wikitext blobs in the past. Idempotent.
     await backfill_strip_multiline_names()
