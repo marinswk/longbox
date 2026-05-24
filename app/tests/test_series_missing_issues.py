@@ -862,6 +862,71 @@ def test_match_owned_credits_crossover_tie_ins_via_trade_pool():
     assert owned == 1
 
 
+def test_match_owned_does_not_reuse_single_comic_across_multiple_expected():
+    """One owned single-issue comic must satisfy AT MOST ONE expected
+    entry. The number-fallback used to mark every "X 1"-shaped entry
+    owned just because the user had a single comic with issue_number=1
+    linked to the series — turning the One-shots umbrella into a sea
+    of false-positive ✓'s."""
+    from app.services.series_progress import match_owned
+
+    # User owns just Revelations (2022) 1. The umbrella series lists
+    # several #1 one-shots (each a distinct article).
+    owned_comic = Comic(
+        title="Revelations 1",
+        source_id="Revelations (2022) 1",
+        issue_number="1",
+    )
+    expected = [
+        "Revelations (2022) 1",       # direct source_id match — owned
+        "Revelations (2023) 1",       # different article, NOT owned
+        "Tales from the Death Star",  # no trailing number
+        "Marvel Comics 1000",         # trailing 1000, no comic matches
+    ]
+    pairs, owned = match_owned(expected, [owned_comic])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Revelations (2022) 1"].direct is owned_comic
+    assert by_title["Revelations (2023) 1"].direct is None
+    assert by_title["Revelations (2023) 1"].trade is None
+    assert by_title["Tales from the Death Star"].direct is None
+    assert by_title["Marvel Comics 1000"].direct is None
+    assert owned == 1
+
+
+def test_match_owned_number_fallback_still_works_when_unambiguous():
+    """The number fallback IS legitimate when the user owns a comic
+    with no source_id (e.g. manual / CSV entry) — it should still
+    satisfy ONE expected entry whose trailing number matches."""
+    from app.services.series_progress import match_owned
+
+    owned_comic = Comic(title="Manual entry", issue_number="5")
+    expected = ["Some Series 5", "Some Series 6"]
+    pairs, owned = match_owned(expected, [owned_comic])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Some Series 5"].direct is owned_comic
+    assert by_title["Some Series 6"].direct is None
+    assert owned == 1
+
+
+def test_match_owned_direct_source_id_wins_over_competing_number_fallback():
+    """A comic that source_id-matches a later expected entry must
+    still be claimed by that entry, even though its issue_number=1
+    could plausibly fall-back-match an earlier entry."""
+    from app.services.series_progress import match_owned
+
+    owned_comic = Comic(
+        title="R1", source_id="Revelations (2022) 1", issue_number="1",
+    )
+    expected = [
+        "Revelations (2023) 1",       # would grab the comic via number
+        "Revelations (2022) 1",       # the legitimate source_id owner
+    ]
+    pairs, _owned = match_owned(expected, [owned_comic])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Revelations (2022) 1"].direct is owned_comic
+    assert by_title["Revelations (2023) 1"].direct is None
+
+
 def test_comic_detail_links_to_series_page():
     with _client() as client:
         cid = _save(client, title="Linked Comic", issue_number="1",

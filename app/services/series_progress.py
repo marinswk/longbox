@@ -120,7 +120,10 @@ def match_owned(
     from app.services.collected_issues import strip_disambiguator
 
     by_source_id = {c.source_id: c for c in comics if c.source_id}
-    by_issue_number = {c.issue_number: c for c in comics if c.issue_number}
+    by_issue_number: dict[str, list[Comic]] = {}
+    for c in comics:
+        if c.issue_number:
+            by_issue_number.setdefault(c.issue_number, []).append(c)
 
     # Index every collected title under both its exact form AND its
     # disambiguator-stripped form, so a story collected via a
@@ -139,14 +142,44 @@ def match_owned(
                 if norm and norm != title:
                     trade_index.setdefault(norm, c)
 
+    # Two-pass single-issue match: direct source_id wins, THEN
+    # number-fallback fills remaining slots — but each Comic can only
+    # satisfy ONE expected entry as a single. Without this, the
+    # number fallback used to mark every "X 1" expected entry as
+    # owned just because the user had one comic with issue_number=1
+    # linked to the series. Trade (collected_issues) matches are
+    # separate and CAN serve many expected entries from one trade.
+    direct_by_index: dict[int, Comic] = {}
+    consumed_ids: set[int] = set()
+
+    # Pass A — direct source_id matches.
+    for i, title in enumerate(expected):
+        c = by_source_id.get(title)
+        if c is None or c.id in consumed_ids:
+            continue
+        direct_by_index[i] = c
+        consumed_ids.add(c.id)
+
+    # Pass B — number-fallback for entries still without a direct
+    # match. Picks the first comic with the matching issue_number
+    # that hasn't already been consumed by Pass A.
+    for i, title in enumerate(expected):
+        if i in direct_by_index:
+            continue
+        num = _trailing_number(title)
+        if num is None:
+            continue
+        for cand in by_issue_number.get(num, []):
+            if cand.id in consumed_ids:
+                continue
+            direct_by_index[i] = cand
+            consumed_ids.add(cand.id)
+            break
+
     pairs: list[MatchPair] = []
     owned = 0
-    for title in expected:
-        direct = by_source_id.get(title)
-        if direct is None:
-            num = _trailing_number(title)
-            if num is not None:
-                direct = by_issue_number.get(num)
+    for i, title in enumerate(expected):
+        direct = direct_by_index.get(i)
         trade = None
         if direct is None:
             trade = trade_index.get(title)
