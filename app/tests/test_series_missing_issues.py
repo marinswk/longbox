@@ -862,6 +862,29 @@ def test_match_owned_credits_crossover_tie_ins_via_trade_pool():
     assert owned == 1
 
 
+def test_match_owned_does_not_credit_host_book_from_partial_story_reprint():
+    """A TPB collecting just one story from an anthology one-shot must
+    NOT mark the host book as owned. Otherwise the One-shots umbrella
+    falsely shows ✓ for one-shots the user doesn't own, just because
+    another TPB happens to reprint a story from them."""
+    from app.services.series_progress import match_owned
+
+    # Doctor Aphra trade collects ONE story from Revelations (2023) 1.
+    # The user does NOT own Revelations (2023) 1 itself.
+    trade = Comic(
+        title="Doctor Aphra Vol. 7",
+        collected_issues=(
+            "Doctor Aphra (2020) 40\n"
+            "Tall Tales (Revelations) (Revelations (2023) 1)"
+        ),
+    )
+    # One-shots umbrella lists the host book as an expected entry.
+    expected = ["Revelations (2023) 1"]
+    pairs, owned = match_owned(expected, [], trade_pool=[trade])
+    assert pairs[0].trade is None
+    assert owned == 0
+
+
 def test_match_owned_does_not_reuse_single_comic_across_multiple_expected():
     """One owned single-issue comic must satisfy AT MOST ONE expected
     entry. The number-fallback used to mark every "X 1"-shaped entry

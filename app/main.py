@@ -29,6 +29,7 @@ async def lifespan(_app: FastAPI):
         backfill_prune_dangling_comicseries,
         backfill_prune_empty_inferred_series,
         backfill_single_issue_format,
+        backfill_splice_year_in_comic_titles,
         backfill_strip_bogus_movie_adaptation_links,
         backfill_strip_umbrella_links_from_trades,
         backfill_strip_multiline_names, backfill_wookieepedia_fandom,
@@ -45,6 +46,11 @@ async def lifespan(_app: FastAPI):
     # Lowercase every legacy `Comic.format` value so the library facet
     # chips collapse cleanly. Idempotent.
     await backfill_normalize_format()
+    # Splice the article's (YYYY) year disambiguator into existing
+    # Comic.title rows whose source_id carries one but the title
+    # doesn't (e.g. "Revelations 1" → "Revelations (2022) 1" so
+    # 2022 and 2023 versions are distinguishable). Idempotent.
+    await backfill_splice_year_in_comic_titles()
     # Default `format='single issue'` on wookieepedia-sourced comics
     # that lack a format AND lack any trade marker (ISBN / contents).
     # Catches up legacy ComicBook-infobox imports saved before the

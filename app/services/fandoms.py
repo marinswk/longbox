@@ -297,6 +297,44 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     return total
 
 
+async def backfill_splice_year_in_comic_titles() -> int:
+    """Re-title wookieepedia-sourced comics whose `source_id` carries
+    a `(YYYY)` year disambiguator the `title` is missing. Idempotent
+    — no-op once the DB is clean.
+
+    Comics added before the year-splice landed on the parser have
+    titles like "Revelations 1" even though their source article is
+    "Revelations (2022) 1". With both 2022 and 2023 versions in the
+    library the user can't tell them apart at a glance. This
+    backfill rewrites such titles in-place so the comic detail page
+    and library views show the disambiguator.
+
+    Returns the number of rows updated.
+    """
+    from app.services.wookieepedia import _splice_year_disambiguator
+    from sqlmodel import select as _sm_select
+    n = 0
+    async with SessionLocal() as session:
+        rows = (await session.exec(
+            _sm_select(Comic).where(
+                Comic.source == "wookieepedia",
+                Comic.source_id.is_not(None),
+                Comic.title.is_not(None),
+            )
+        )).all()
+        for comic in rows:
+            if not comic.source_id or not comic.title:
+                continue
+            new_title = _splice_year_disambiguator(comic.title, comic.source_id)
+            if new_title != comic.title:
+                comic.title = new_title
+                session.add(comic)
+                n += 1
+        if n:
+            await session.commit()
+    return n
+
+
 async def backfill_strip_umbrella_links_from_trades() -> int:
     """Drop ComicSeries links between a synthetic umbrella series
     (One-shots / FCBD / Graphic Novels buckets — `source_id` starts

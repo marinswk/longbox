@@ -18,6 +18,7 @@ from app.services.wookieepedia import (
     _find_infobox,
     _looks_like_comic_book_article,
     _parse_date,
+    _splice_year_disambiguator,
 )
 
 
@@ -290,6 +291,38 @@ def test_looks_like_comic_book_article_rejects_prose_novel():
         "[[Category:Hardcover books]]\n"
     )
     assert _looks_like_comic_book_article(wt) is False
+
+
+def test_splice_year_disambiguator_inserts_before_issue_number():
+    """Without this, "Revelations (2022) 1" and "Revelations (2023) 1"
+    both end up as identical "Revelations 1" rows in the library."""
+    assert _splice_year_disambiguator(
+        "Revelations 1", "Revelations (2022) 1"
+    ) == "Revelations (2022) 1"
+    assert _splice_year_disambiguator(
+        "Star Wars 1", "Star Wars (2020) 1"
+    ) == "Star Wars (2020) 1"
+
+
+def test_splice_year_disambiguator_appends_when_no_issue_number():
+    assert _splice_year_disambiguator(
+        "Tales of Something", "Tales of Something (2017)"
+    ) == "Tales of Something (2017)"
+
+
+def test_splice_year_disambiguator_no_op_when_year_already_present():
+    """Idempotent — re-running on an already-spliced title is a no-op."""
+    assert _splice_year_disambiguator(
+        "Revelations (2022) 1", "Revelations (2022) 1"
+    ) == "Revelations (2022) 1"
+
+
+def test_splice_year_disambiguator_no_op_when_article_has_no_year():
+    """Most Wookieepedia article titles have no year disambiguator
+    (the work is uniquely named) — leave the displayed title alone."""
+    assert _splice_year_disambiguator(
+        "War of the Bounty Hunters 5", "War of the Bounty Hunters 5"
+    ) == "War of the Bounty Hunters 5"
 
 
 def test_extract_cover_gallery_returns_label_and_filename_for_each_entry():

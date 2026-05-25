@@ -28,6 +28,7 @@ from app.models import Comic, Publisher, Series
 from app.services.fandoms import (
     backfill_merge_duplicate_series,
     backfill_single_issue_format,
+    backfill_splice_year_in_comic_titles,
     backfill_strip_bogus_movie_adaptation_links,
     backfill_strip_umbrella_links_from_trades,
 )
@@ -430,6 +431,53 @@ def test_strip_umbrella_links_removes_trades_only():
 
     # Idempotent.
     again = asyncio.run(backfill_strip_umbrella_links_from_trades())
+    assert again == 0
+
+
+def test_backfill_splice_year_rewrites_legacy_titles():
+    """Comics added before the year-splice landed on the parser have
+    titles missing the article's (YYYY) disambiguator. The backfill
+    rewrites them in-place so 2022 and 2023 variants of the same
+    one-shot are distinguishable."""
+    async def _seed():
+        async with SessionLocal() as session:
+            # Needs fixing — source_id has year, title doesn't.
+            c1 = Comic(title="YR Revelations 1", source="wookieepedia",
+                       source_id="YR Revelations (2022) 1", isbn_13="9799800000001")
+            # Already correct — must NOT be touched.
+            c2 = Comic(title="YR Revelations (2022) 1", source="wookieepedia",
+                       source_id="YR Revelations (2022) 1", isbn_13="9799800000002")
+            # Source has no year — must NOT be touched.
+            c3 = Comic(title="YR WBH 5", source="wookieepedia",
+                       source_id="YR WBH 5", isbn_13="9799800000003")
+            # Non-wookieepedia — must NOT be touched.
+            c4 = Comic(title="YR Some 1", source="openlibrary",
+                       source_id="X (2020) 1", isbn_13="9799800000004")
+            session.add_all([c1, c2, c3, c4])
+            await session.commit()
+            return c1.id, c2.id, c3.id, c4.id
+
+    cid1, cid2, cid3, cid4 = asyncio.run(_seed())
+
+    n = asyncio.run(backfill_splice_year_in_comic_titles())
+    assert n == 1
+
+    async def _titles(ids):
+        async with SessionLocal() as session:
+            out = {}
+            for i in ids:
+                c = await session.get(Comic, i)
+                out[i] = c.title if c else None
+            return out
+
+    titles = asyncio.run(_titles([cid1, cid2, cid3, cid4]))
+    assert titles[cid1] == "YR Revelations (2022) 1"
+    assert titles[cid2] == "YR Revelations (2022) 1"
+    assert titles[cid3] == "YR WBH 5"
+    assert titles[cid4] == "YR Some 1"
+
+    # Idempotent.
+    again = asyncio.run(backfill_splice_year_in_comic_titles())
     assert again == 0
 
 

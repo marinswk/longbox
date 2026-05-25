@@ -162,6 +162,48 @@ def _first_line(value: Optional[str]) -> Optional[str]:
     return None
 
 
+# Year disambiguators on Wookieepedia article titles: `(YYYY)`. Used
+# whenever multiple distinct works share a name (Star Wars 1977 /
+# 2013 / 2015 / 2020; Revelations 2022 / 2023; …).
+_ARTICLE_YEAR_RX = re.compile(r"\((\d{4})\)")
+# Trailing issue number on a cleaned title: "Revelations 1" → "1".
+_TRAILING_ISSUE_RX = re.compile(r"\s+(\d+(?:\.\d+)?[A-Za-z]?)\s*$")
+
+
+def _splice_year_disambiguator(displayed: str, article_title: str) -> str:
+    """Return `displayed` with the article's `(YYYY)` year disambiguator
+    spliced in, when the article has one and the displayed title
+    doesn't already include it.
+
+    The year lands just before the trailing issue number when one is
+    present:
+        ("Revelations 1", "Revelations (2022) 1")
+            -> "Revelations (2022) 1"
+    Otherwise it's appended:
+        ("Tales", "Tales (2017)")
+            -> "Tales (2017)"
+
+    No-op when:
+      * the article title has no `(YYYY)`
+      * the displayed title already contains `(YYYY)`
+      * the displayed title is the same as the article title
+    """
+    if not displayed or not article_title:
+        return displayed
+    if displayed == article_title:
+        return displayed
+    m = _ARTICLE_YEAR_RX.search(article_title)
+    if not m:
+        return displayed
+    year_tag = f"({m.group(1)})"
+    if year_tag in displayed:
+        return displayed
+    issue = _TRAILING_ISSUE_RX.search(displayed)
+    if issue:
+        return f"{displayed[:issue.start()]} {year_tag} {issue.group(1)}"
+    return f"{displayed} {year_tag}"
+
+
 # Epic Collection sub-imprints all live under the umbrella "Epic
 # Collection" Wookieepedia article, distinguished by article-title
 # prefix and the ===Legends=== / ===Canon=== gallery sections inside
@@ -1353,6 +1395,15 @@ async def _candidate_from_title(title: str) -> Optional[LookupCandidate]:
     # first non-empty line so the saved Series / Comic carry a clean,
     # single-line name regardless of the upstream wiki shape.
     title_clean = _first_line(fields.get("title")) or parsed.get("title") or title
+    # Splice the article's year disambiguator into the displayed title
+    # when the infobox `title=` field omits it. Wookieepedia uses
+    # `(YYYY)` in the article slug whenever distinct works share a
+    # name (e.g. `Revelations (2022) 1` vs `Revelations (2023) 1`,
+    # `Star Wars (2015) 1` vs `Star Wars (2020) 1`). Without this
+    # the two end up as identical "Revelations 1" / "Star Wars 1"
+    # rows in the library.
+    article_title_used = parsed.get("title") or title
+    title_clean = _splice_year_disambiguator(title_clean, article_title_used)
     # Prefer the deepest-nested wikilinked entry from the RAW series
     # field — that's the specific comic series. Fall back to the
     # cleaned first-line value if the raw form has no usable bullets

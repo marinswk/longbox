@@ -123,15 +123,26 @@ def test_parse_entries_plain_year_disambiguated_issue_not_combined():
     assert out[0].text == "Star Wars (1977) 1"
 
 
-def test_coverage_titles_yields_story_book_and_verbatim_for_combined():
-    """A combined StoryCite entry covers three keys: the story title,
-    the host-book title, and the verbatim line."""
+def test_coverage_titles_yields_story_and_verbatim_for_combined_not_book():
+    """A combined StoryCite entry covers the story title and the
+    verbatim line — but NOT the host-book title. Collecting one
+    story from a multi-story anthology one-shot doesn't mean the
+    user owns the host book; falsely marking it owned polluted the
+    One-shots umbrella with bogus ✓'s."""
     titles = coverage_titles("Tool of the Empire (Revelations (2023) 1)")
     assert titles == {
         "Tool of the Empire",
-        "Revelations (2023) 1",
         "Tool of the Empire (Revelations (2023) 1)",
     }
+    assert "Revelations (2023) 1" not in titles
+
+
+def test_coverage_titles_full_book_reprint_still_credits_book():
+    """A trade that legitimately collects the WHOLE one-shot records
+    it as a plain (non-combined) entry — that path still credits the
+    book title via the verbatim-text branch."""
+    titles = coverage_titles("Revelations (2023) 1")
+    assert "Revelations (2023) 1" in titles
 
 
 def test_coverage_titles_plain_entries_yield_only_themselves():
@@ -168,12 +179,15 @@ def test_parse_entries_recognises_legacy_dash_combined_entry():
 
 
 def test_coverage_titles_handles_dash_combined_entry():
+    """Em-dash combined entries get the same story+verbatim treatment
+    as paren-combined ones — the host book is intentionally NOT
+    added (see paren-combined test above for the rationale)."""
     titles = coverage_titles("Death Masque — The Empire Strikes Back Monthly 149")
     assert titles == {
         "Death Masque",
-        "The Empire Strikes Back Monthly 149",
         "Death Masque — The Empire Strikes Back Monthly 149",
     }
+    assert "The Empire Strikes Back Monthly 149" not in titles
 
 
 def test_parse_entries_dashed_title_without_issue_number_not_combined():

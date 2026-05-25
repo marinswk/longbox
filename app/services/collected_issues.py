@@ -305,29 +305,36 @@ def coverage_titles(raw: str | None) -> set[str]:
     """Every issue / story title a `collected_issues` blob covers, for
     series-progress and duplicate matching.
 
-    A plain entry contributes just its own title. A combined StoryCite
-    entry — `"<story> (<book N>)"` — contributes THREE keys:
+    A plain entry contributes its own title. A combined StoryCite
+    entry — `"<story> (<book N>)"` — contributes TWO keys:
 
-      * the story title   ("Tool of the Empire")
-      * the book title    ("Revelations (2023) 1")
-      * the verbatim line ("Tool of the Empire (Revelations (2023) 1)")
+      * the verbatim line  ("Tool of the Empire (Revelations (2023) 1)")
+      * the story title    ("Tool of the Empire")
 
-    The story key is what attributes an anthology one-shot's contents
-    to each contributing series. Wookieepedia lists the story
-    ("Tool of the Empire") as an issue of *Darth Vader (2020)* even
-    though it was physically published inside the multi-story one-shot
-    *Revelations (2023) 1* — so a trade that collects the story has to
-    match the series on the story name, not on the host book.
+    The story key attributes an anthology one-shot's contents to each
+    contributing series — Wookieepedia lists the story ("Tool of the
+    Empire") as an issue of *Darth Vader (2020)* even though it was
+    physically published inside the multi-story one-shot
+    *Revelations (2023) 1*, so a trade that collects the story has to
+    match the series on the story NAME, not on the host book.
+
+    The **book** title is intentionally NOT added. Collecting one
+    story from a multi-story one-shot doesn't mean the user owns the
+    host book; falsely marking it owned was what caused
+    `Revelations (2023) 1` to appear "owned" under the One-shots
+    umbrella just because some Doctor Aphra TPB picked up a single
+    story from it. A trade that legitimately collects the whole book
+    records it as a plain (non-combined) entry — the verbatim line is
+    then the book title and gets added via the `out.add(e.text)`
+    branch above. So full-book reprints still count; story-only
+    reprints don't claim the host book.
     """
     out: set[str] = set()
     for e in parse_entries(raw):
         if not e.linkable:
             continue
         out.add(e.text)
-        if e.article_id:
-            # Combined entry: article_id is the book half.
-            out.add(e.article_id)
-            combined = _split_combined(e.text)
-            if combined:
-                out.add(combined[0])  # story half
+        combined = _split_combined(e.text)
+        if combined:
+            out.add(combined[0])  # story half — see docstring
     return out

@@ -14,7 +14,10 @@ def _save(client: TestClient, **data) -> int:
     payload.update(data)
     r = client.post("/add/save", data=payload)
     assert r.status_code == 200
-    comics = client.get("/api/comics").json()
+    # `/api/comics` defaults to limit=50; the shared test DB grows
+    # past that across runs so we need the full page to find a row by
+    # ISBN — see the "test DB accumulates" note in CLAUDE.md.
+    comics = client.get("/api/comics", params={"limit": 500}).json()
     cand = [c for c in comics if c.get("isbn_13") == data.get("isbn_13")]
     return cand[0]["id"]
 
