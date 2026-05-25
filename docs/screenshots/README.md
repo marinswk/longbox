@@ -13,26 +13,34 @@ UI captures of the live app, referenced from the user-facing docs.
 - **Don't include personal data.** Use a demo library if a shot would
   expose your collection's contents or personal storage labels.
 
-## Suggested shots to add
+## Current captures
 
 | Filename | What it shows |
 |---|---|
-| `home-desktop.png` | Landing page hero + nav |
+| `home-desktop.png` | Landing page hero + recent additions + series progress |
 | `library-desktop.png` | Filtered grid with the sidebar open |
-| `library-mobile.png` | Same view with the bottom-sheet filter drawer |
-| `add-confirm-variants.png` | `/add` confirm with the variant cover strip visible |
-| `comic-detail.png` | Comic detail page with copies, tags, series links |
-| `series-detail.png` | Series detail with progress + missing-issues list |
-| `stats.png` | Stats page with donuts |
-| `admin.png` | Admin hub |
-| `scanner-mobile.png` | Fullscreen barcode scanner with corner brackets |
+| `series-desktop.png` | Collage covers + completion bars |
+| `stats-desktop.png` | Composition donuts |
+| `admin-desktop.png` | Admin hub (backup / restore / export / cleanup / danger zone) |
+| `comic-detail-desktop.png` | Full comic detail page |
+| `missing-desktop.png` | Owned-series gap report |
+| `duplicates-desktop.png` | Redundantly-held issues |
+| `add-desktop.png` | The `/add` lookup form |
+| `home-mobile.png` | Mobile home |
+| `library-mobile.png` | Mobile library card grid |
+| `comic-detail-mobile.png` | Mobile comic detail |
 
-## How to take one
+## How to re-take
 
-The screenshots are taken from a real deployment; reproducing them
-yourself works the same way:
+The captures were produced via a one-off Playwright script driving a
+headless Chromium against the live deployment at 1440×900 desktop and
+390×844 mobile. To re-take after UI changes, the easiest path is:
 
-1. Bring up the stack (`docker compose up --build`).
-2. Add a few comics for visual interest.
-3. Open the browser at the target page, choose a clean viewport, and
-   capture (DevTools → "Capture screenshot" works for full-page PNGs).
+1. Bring up the stack (`docker compose up --build`) and add some comics
+   so the views aren't empty.
+2. Open each page in a fresh browser at the target viewport.
+3. DevTools → ⋮ menu → "Capture screenshot" produces a clean PNG you
+   can drop in here.
+
+If you keep the script around (don't commit it), it's easy to re-batch
+all 12 in one command — see git history for an example.

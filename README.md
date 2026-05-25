@@ -11,6 +11,8 @@ comic-book-themed UI. Runs as a single Docker container.
 **Currently:** 484 passing tests, 11 migrations, single-user / LAN-only by
 design.
 
+![Home](docs/screenshots/home-desktop.png)
+
 ---
 
 ## Feature highlights
@@ -31,6 +33,23 @@ design.
 | **Portability** | Full backup `.zip` (data + covers). JSON-only export. CSV export (one-row-per-copy spreadsheet shape + re-importable wizard shape). Restore endpoint. Factory-reset wipe behind a typed confirmation phrase. |
 | **Mobile** | Responsive at 360px. Hamburger nav. Filter bottom-sheet drawer. Fullscreen barcode scanner with corner brackets, torch toggle, haptic feedback. PWA install (web manifest + service worker + offline shell). |
 | **Reading log** | Timeline of read copies grouped by month. |
+
+### A few more views
+
+| | |
+|---|---|
+| ![Library](docs/screenshots/library-desktop.png) | ![Series](docs/screenshots/series-desktop.png) |
+| `/library` — card grid + filter sidebar | `/series` — collage covers + completion bars |
+| ![Stats](docs/screenshots/stats-desktop.png) | ![Comic detail](docs/screenshots/comic-detail-desktop.png) |
+| `/stats` — composition donuts + KPIs | `/comic/{id}` — full detail page with creators, tags, multi-series links |
+| ![Missing](docs/screenshots/missing-desktop.png) | ![Duplicates](docs/screenshots/duplicates-desktop.png) |
+| `/missing` — gap report across owned series | `/duplicates` — issues you hold redundantly |
+
+Mobile-responsive throughout:
+
+| Home | Library | Comic detail |
+|---|---|---|
+| ![Home (mobile)](docs/screenshots/home-mobile.png) | ![Library (mobile)](docs/screenshots/library-mobile.png) | ![Comic detail (mobile)](docs/screenshots/comic-detail-mobile.png) |
 
 ---
 
