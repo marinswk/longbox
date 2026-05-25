@@ -68,14 +68,40 @@ with every Comic field editable:
 | Field | Notes |
 |---|---|
 | Title, Issue number, Series, Publisher | Free-form. Series + publisher get find-or-create handling. |
-| Variant | E.g. "1A", "1:25 Ratio", "Director's Cut". |
+| **Variant cover picker** | Horizontal strip of every variant the source exposes — see below. |
 | Cover date | Full date or just a year. |
 | Pages, Cover price (EUR) | Optional. |
 | ISBN-13, ISBN-10, UPC | Stored as-is. |
-| Cover URL (remote) | Auto-filled from source. The local image gets downloaded in the background after save. |
+| Cover URL (remote) | Auto-filled from source. The local image gets downloaded in the background after save. Editable if you have a better URL. |
 | Description | Multi-line. |
 | **Fandom picker** | See below. |
 | Price paid | Stored on the Copy, not the Comic. |
+
+### Variant cover picker
+
+When the source returns a cover gallery (Wookieepedia ships gallery
+sections on most singles; the WOTBH 5 article has 17 variants), the
+confirm page shows a horizontal scrollable strip of thumbnails below
+the main cover. Each tile is one variant: the article's "main" cover
+labelled **Standard** at the start, then every gallery entry with its
+caption.
+
+Click a tile to:
+1. Swap the big preview image to that variant.
+2. Set the **Cover URL (remote)** field to the variant's URL.
+3. Set hidden `variant_name` + `variant_cover_url` fields that flow
+   into the first Copy created on save.
+
+The variant lives on the **Copy**, not the Comic. One Comic per issue
+no matter how many variants you own; each Copy records which physical
+variant it ships with. Progress math stays correct (owning 3 variants
+of issue #5 doesn't count as 3 different issues).
+
+The whole gallery is cached on the Comic (`cover_variants_json`) so
+when you add a SECOND copy later — say you find the McNiven variant at
+a con three months in — the add-copy form on `/comic/{id}` offers the
+same dropdown without re-fetching the source. There's an "Other (type
+below)" option for variants the source didn't catalogue.
 
 ### The Fandom picker
 

@@ -6,9 +6,15 @@ A **Series** in Longbox is a parent row that owns:
 - optional `source` + `source_id` for refreshing the expected-issues list
 - optional `expected_issues` — newline-joined article titles, used to
   compute owned-vs-missing completion progress
+- optional `canceled_issues` — a sub-list of `expected_issues` for
+  issues that the wiki flags as cancelled (e.g. Star Wars 3-D #4–7).
+  Rendered separately on the series page and subtracted from the
+  progress denominator so a series with no PUBLISHED gaps reads as 100%.
 
 Every Comic optionally points at a Series via `series_id` (nullable, so
-one-shots without a parent series are allowed).
+one-shots without a parent series are allowed). It can also belong to
+**additional** series via the `ComicSeries` link table — see
+[multi-series links](#multi-series-links) below.
 
 ## `/series` browse page
 
@@ -60,15 +66,27 @@ The refresh form has three source options:
 
 Each fetcher returns the list of expected issue article titles. The
 detail page recomputes owned-vs-missing against the comics in that
-series. Owned comics match via:
+series — primary FK PLUS multi-series membership via `ComicSeries`.
+Owned comics match in **two passes** so one physical comic can only
+satisfy ONE expected entry as a single (the trade-credit pass is
+independent and CAN serve many entries per trade):
 
-1. **Direct hit**: `Comic.source_id == expected article title`
-2. **Trade credit**: the comic's `collected_issues` mentions the
-   expected article
-3. **Trailing digits fallback**: trailing integer of the article title
-   matches `Comic.issue_number`
+**Pass A — direct source_id match.**
+`Comic.source_id == expected article title`. Each matched comic is
+consumed.
 
-That third fallback is for legacy comics that pre-date source linking.
+**Pass B — trailing-digit fallback** (only against unconsumed comics).
+The trailing integer of the expected article title matches
+`Comic.issue_number`. This handles legacy comics that pre-date source
+linking and CSV-imported comics whose source_id was a guess.
+
+**Trade credit (independent).** The comic's `collected_issues` covers
+the expected article. This uses the `coverage_titles` set computed
+from a comic's collected_issues blob, which includes story-half
+attributions for combined `"Story (Book)"` entries — so a trade
+collecting just one story from a multi-story anthology one-shot
+credits the STORY, but not the host book. (Pre-fix bug; see
+[ROADMAP.md](../ROADMAP.md).)
 
 ## Series-level dedup
 
@@ -97,3 +115,49 @@ comic. The same logic lives in:
 
 There's also a manual one-shot **🧹 Prune orphan series** button on
 the admin Cleanup section for paranoid sweeps.
+
+## Multi-series links
+
+A Comic can belong to more than one Series at once via the
+`ComicSeries` link table. Real examples:
+
+- An **omnibus** collecting issues from KotOR singles AND KotOR: War
+  lives in BOTH series so each `/series/{id}` reflects coverage.
+- A **reprint TPB** belonging to Epic Collection AND the original
+  ongoing series.
+- An **event tie-in** showing up under the event series AND under the
+  individual ongoing it was published in.
+
+The Comic's `series_id` FK stays the PRIMARY series (one per row).
+`ComicSeries` rows capture the extra memberships; exactly one row per
+comic carries `is_primary=true` and matches `series_id`.
+
+On the comic detail page the SERIES section lists every membership;
+the primary is flagged. On `/comic/{id}` you can attach the comic to
+another series via the **+ Add another series** form (live search of
+existing series with a find-or-create fallback) and detach via the ✕
+on a non-primary chip.
+
+Most multi-series memberships get attached **automatically** when a
+trade is saved:
+`_attach_inferred_series` walks the comic's `collected_issues`, looks
+up each contained issue article on Wookieepedia, and find-or-creates
++ links the canonical series each one belongs to. Synthetic umbrella
+series (One-shots, FCBD, Graphic Novels — `source_id` LIKE
+`Category:%`) are intentionally skipped here: the umbrella's primary
+purpose is grouping standalone one-shots, not collecting every trade
+that happens to reprint one.
+
+## Containment
+
+Separate from series membership: `ComicContainment` records "Comic
+parent contains Comic child" — e.g. an omnibus comic contains its
+constituent TPB comics, which in turn contain their issues. Each
+relationship is a single link row with a `position` for ordering.
+
+Both directions render on the comic detail page:
+- **This collects** — child comics, with owned/not-owned dots so you
+  can see at a glance whether your physical copies cover the whole
+  contents.
+- **Covered by** — parent comics in your library that list this one as
+  a child.

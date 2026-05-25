@@ -11,8 +11,12 @@ Self-hosted comic-collection manager. Single Python container behind
 Docker. SQLite + cover image files persisted in `/data`. No multi-user,
 no auth, no cloud. LAN deploy via Portainer.
 
-Currently **329 passing tests**. Last shipped: mobile-readiness pass
-(responsive layout, PWA install, fullscreen barcode scanner).
+Currently **484 passing tests** across 59 files. Last shipped: variant
+cover tracking (per-Copy), Wookieepedia parser polish (year disambiguator,
+{{Book}} infobox, movie-adaptation umbrella routing), series-progress
+matcher hardening (one comic → one expected entry; no host-book credit
+from partial-story reprints), and public-release prep (LICENSE,
+CONTRIBUTING, SECURITY).
 
 ---
 

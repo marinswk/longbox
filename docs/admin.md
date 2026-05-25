@@ -54,11 +54,22 @@ mentioning `/add` for single-comic flows.
 
 ## Cleanup
 
-Two tools:
+Three tools:
 
 **🧹 Prune orphan series** — deletes every Series row that no Comic
 points at anymore. Usually a no-op (the app auto-prunes on delete +
 re-pick) but exists for paranoia.
+
+**🧽 Clean up library** — heavy pass that walks every comic and:
+
+- re-derives the canonical source / series for any comic whose
+  `source` is set,
+- re-runs the inferred-series linkage so omnibuses pick up newly-
+  recognised contained series,
+- prunes empty series rows that the per-comic refresh left behind.
+
+Long-running — progress polls `/library/cleanup/status` and renders an
+HTMX status line. Safe to leave running in another tab.
 
 **🩺 Find inconsistencies** — read-only sweep that flags comics whose
 data shape disagrees with itself. Each result has a one-click

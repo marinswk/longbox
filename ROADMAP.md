@@ -1,7 +1,7 @@
 # Longbox roadmap
 
-Living document. Currently **329 passing tests**. Cross items off as they
-land; add new ones at the bottom of the relevant section.
+Living document. Currently **484 passing tests** across 59 files. Cross items
+off as they land; add new ones at the bottom of the relevant section.
 
 ```bash
 # Run tests
@@ -17,12 +17,19 @@ docker run --rm longbox-test
 
 - [ ] **ComicVine list importer.** Paste a CV list URL → fan out and add
       all. Reuses the CSV-import wizard from step 4 onwards.
+- [ ] **Star Wars in-universe timeline page.** Planned design lives at
+      [docs/plans/timeline-page.md](docs/plans/timeline-page.md). Not yet
+      built; data is already on every comic via `Comic.timeline` /
+      `Comic.era`.
 
 ### Bigger projects
 
 - [ ] **Auth.** Single-user password (basic-auth) probably enough; multi-tenant
       would be a schema lift.
-- [ ] **Read-only API tokens.** For Home Assistant / dashboard widgets.
+- [ ] **Public JSON API.** Today there's only a handful of ad-hoc `/api/*`
+      endpoints (comics CRUD, export). A proper `/api/v1` surface with a
+      shared bearer token would unlock scripting / Home Assistant widgets /
+      a future mobile app.
 - [ ] **Recommendation rail.** Publisher + era + tag overlap. Data-thin
       until libraries are large.
 
@@ -48,12 +55,64 @@ docker run --rm longbox-test
 
 ## Done
 
+### v1.1 batch — variant covers, parser fixes, public-release prep
+
+- [x] **Variant cover tracking.** `Comic.cover_variants_json` caches the
+      source's cover gallery; `Copy.variant_name` + `Copy.variant_cover_url`
+      record which variant each physical copy ships with. Add flow shows a
+      thumbnail strip; add-copy form has a dropdown + free-text override.
+      Migration `0011`.
+- [x] **{{Book}} infobox recognition.** Wookieepedia trilogy GNs use the
+      generic `{{Book}}` template, which we now accept when categories
+      prove the article is a graphic novel / TPB / omnibus.
+- [x] **Movie-adaptation umbrella routing.** Trilogy GNs and individual
+      "X Adaptation" miniseries route to a shared "Star Wars Movie
+      Adaptations" series. Title-gated so tie-in one-shots that carry
+      the category for thematic reasons aren't pulled in.
+- [x] **Synthetic umbrella series no longer pollute trades.** TPBs that
+      collect a one-shot stopped getting dragged into the One-shots /
+      FCBD / Graphic Novels umbrellas. Backfill scrubs existing bogus
+      links.
+- [x] **Series-progress matcher hardening.** One owned comic can no
+      longer satisfy multiple expected entries via the issue-number
+      fallback. The host book of a multi-story anthology one-shot is
+      no longer counted as owned from a partial-story TPB reprint.
+- [x] **Year disambiguator in titles.** Comics whose source article
+      title is `Revelations (2022) 1` are no longer saved as the
+      indistinguishable `Revelations 1`. Backfill rewrites legacy rows.
+- [x] **Single-issue format default.** Wookieepedia `{{ComicBook}}`
+      infoboxes don't carry `media type=`; we now default to
+      `single issue` for those and `graphic novel` for `{{GraphicNovel}}`.
+- [x] **Empty-result cache shortening.** A negative ISBN/UPC lookup
+      result is cached only briefly so adding a comic that wasn't on
+      Wookieepedia yesterday but is today no longer waits 30 days.
+- [x] **Prompt-injection guard.** A pytest test + a `.githooks/pre-commit`
+      hook block source commits containing known injection markers.
+- [x] **App versioning.** `app/version.py` is single-source semver.
+      Surfaced on `/admin` and `/health`. Bumped per commit.
+- [x] **Multi-series link table** (`ComicSeries`). Migration `0009`.
+      Lets an omnibus belong to every series it collects.
+- [x] **Comic containment** (`ComicContainment`). Migration `0008`.
+      "What does this TPB contain" and "what owns this issue?" both
+      render on the comic detail page.
+- [x] **Canceled-issue tracking** (`Series.canceled_issues`).
+      Migration `0010`. Series with planned-but-cancelled issues
+      (e.g. Star Wars 3-D #4–7) no longer show forever-stuck progress.
+- [x] **`/missing` index** — owned-series missing-issue + missing-TPB
+      lists aggregated across the library.
+- [x] **`/duplicates` index** — comics held redundantly (issue + a
+      collected reprint, etc.).
+- [x] **Library cleanup** — `/admin` "Clean up library" runs a heavy
+      pass that re-derives series, re-runs inferred-series linkage, and
+      prunes empties for every comic in one go. Per-comic refresh stays
+      available for narrower fixes.
+
 ### v1 polish pass
 
 - [x] Dockerfile `test` target — `docker build --target test -t longbox-test .`
       runs the whole suite cleanly.
 
-### v1.1 batch (high value, low effort)
+### v1.1 batch (high value, low effort) — original
 
 - [x] Tag pages (`GET /tags` index + `GET /tag/{name}` redirect).
 - [x] Library filters for `read_status` / `storage`.

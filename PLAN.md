@@ -1,5 +1,10 @@
 # Longbox — Self-Hosted Comic Library Manager
 
+> **Historical design document (April 2026).** Preserved for context;
+> the README, ROADMAP, and `docs/` directory are the current source of
+> truth. Most decisions below shipped — see [ROADMAP.md](ROADMAP.md)
+> for the actual delivery history.
+>
 > A self-hosted web app to catalog a personal comic book collection. Scan ISBNs and issue IDs, fetch metadata from open APIs, and browse your library with filters, stats, and a quirky comic-book-themed UI.
 >
 > Deployed via Docker Compose on a Portainer host.
