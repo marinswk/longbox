@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
@@ -45,7 +45,7 @@ CMD ["pytest", "-q", "app/tests"]
 # build target. Anything that builds from this Dockerfile without `--target`
 # (compose, plain `docker build .`) lands here.
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
