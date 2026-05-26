@@ -10,12 +10,19 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
-PNG_BYTES = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03\x00\x01\x5b\x9b\x05\xa4"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+def _real_png_bytes() -> bytes:
+    """Generate a real 1×1 PNG via Pillow. Pillow's `verify()` (used
+    by `covers._is_valid_image_payload`) is strict about CRCs, so a
+    hand-crafted byte string with the right magic header but wrong
+    CRC values won't pass; the test PNG needs to be Pillow-generated."""
+    from io import BytesIO
+    from PIL import Image
+    buf = BytesIO()
+    Image.new("RGBA", (1, 1), (255, 255, 255, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+PNG_BYTES = _real_png_bytes()
 
 
 @respx.mock
@@ -41,7 +48,7 @@ def test_download_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(covers.settings, "data_dir", tmp_path)
     url = "https://covers.example/y.jpg"
     route = respx.get(url).mock(
-        return_value=httpx.Response(200, content=b"\xff\xd8\xff\xd9", headers={"content-type": "image/jpeg"})
+        return_value=httpx.Response(200, content=PNG_BYTES, headers={"content-type": "image/png"})
     )
 
     import asyncio
@@ -106,3 +113,92 @@ def test_refresh_cover_400_when_no_remote_url():
         cid = client.post("/api/comics", json={"title": "no cover"}).json()["id"]
         r = client.post(f"/api/comics/{cid}/cover/refresh")
         assert r.status_code == 400
+
+
+# ── Hardening: SSRF guard ─────────────────────────────────────────────
+
+
+def test_is_safe_remote_host_blocks_loopback():
+    assert covers._is_safe_remote_host("http://127.0.0.1/x.jpg") is False
+    assert covers._is_safe_remote_host("http://[::1]/x.jpg") is False
+    assert covers._is_safe_remote_host("http://localhost/x.jpg") is False
+
+
+def test_is_safe_remote_host_blocks_private_ranges():
+    """RFC1918 + link-local addresses are off-limits."""
+    for url in [
+        "http://10.0.0.1/x.jpg",
+        "http://192.168.1.5/x.jpg",
+        "http://172.16.0.1/x.jpg",
+        "http://169.254.169.254/x.jpg",  # AWS metadata, classic SSRF target
+    ]:
+        assert covers._is_safe_remote_host(url) is False, url
+
+
+def test_is_safe_remote_host_blocks_non_http_schemes():
+    """`file://`, `gopher://`, etc. should never be fetched."""
+    assert covers._is_safe_remote_host("file:///etc/passwd") is False
+    assert covers._is_safe_remote_host("gopher://example/x") is False
+    assert covers._is_safe_remote_host("ftp://example/x.jpg") is False
+
+
+def test_is_safe_remote_host_accepts_public_literal_ip():
+    """Literal-IP check doesn't need DNS — the test image's
+    network stack might not have it."""
+    assert covers._is_safe_remote_host("https://8.8.8.8/x.jpg") is True
+    assert covers._is_safe_remote_host("https://1.1.1.1/x.jpg") is True
+
+
+def test_is_safe_remote_host_allows_unresolvable_hostname():
+    """Hostnames that fail DNS resolution pass through — let httpx
+    surface the error rather than blocking pre-flight. Critical
+    for keeping respx-mocked tests working in CI."""
+    # `nonexistent.invalid` is reserved by RFC 6761 to always fail.
+    assert covers._is_safe_remote_host("https://nonexistent.invalid/x.jpg") is True
+
+
+def test_download_refuses_loopback_url(tmp_path, monkeypatch):
+    """End-to-end: a `cover_url_remote` pointing at loopback never
+    triggers an actual HTTP fetch. No request is sent; the function
+    returns None and writes nothing to disk."""
+    monkeypatch.setattr(covers.settings, "data_dir", tmp_path)
+    import asyncio
+    assert asyncio.run(covers.download("http://127.0.0.1:8080/cover.jpg")) is None
+    covers_path = tmp_path / "covers"
+    assert not covers_path.exists() or not list(covers_path.iterdir())
+
+
+# ── Hardening: size cap + image validation ────────────────────────────
+
+
+@respx.mock
+def test_download_rejects_oversized_response(tmp_path, monkeypatch):
+    """A malicious cover URL serving 50 MB+ must not be written."""
+    monkeypatch.setattr(covers.settings, "data_dir", tmp_path)
+    # Force the limit down so the test stays fast and doesn't need to
+    # generate megabytes of bytes.
+    monkeypatch.setattr(covers, "_MAX_COVER_BYTES", 1024)
+    url = "https://covers.example/huge.png"
+    huge = PNG_BYTES + b"\x00" * 4096  # well over the 1 KB ceiling
+    respx.get(url).mock(
+        return_value=httpx.Response(200, content=huge, headers={"content-type": "image/png"})
+    )
+    import asyncio
+    assert asyncio.run(covers.download(url)) is None
+
+
+@respx.mock
+def test_download_rejects_non_image_payload(tmp_path, monkeypatch):
+    """A server lying about content-type ('image/jpeg' but actual
+    body is HTML) gets caught by the Pillow validation step."""
+    monkeypatch.setattr(covers.settings, "data_dir", tmp_path)
+    url = "https://covers.example/lie.jpg"
+    respx.get(url).mock(
+        return_value=httpx.Response(
+            200,
+            content=b"<!doctype html><body>not an image</body>",
+            headers={"content-type": "image/jpeg"},
+        )
+    )
+    import asyncio
+    assert asyncio.run(covers.download(url)) is None

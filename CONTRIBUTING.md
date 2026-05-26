@@ -9,7 +9,7 @@ accidentally violate one of the project's intentional non-goals.
 Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/<owner>/longbox.git
+git clone https://github.com/marinswk/longbox.git
 cd longbox
 uv sync
 cp .env.example .env       # optional; the app runs with no env set

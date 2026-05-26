@@ -15,8 +15,8 @@ forward-auth middleware, Cloudflare Access, etc.).
 ## Reporting a vulnerability
 
 Please **do not** open a public GitHub issue for security
-vulnerabilities. Email the repo owner instead — see the GitHub profile
-listed as the repo owner.
+vulnerabilities. Email **marins.wk@gmail.com** instead — same address
+listed as the repo owner on GitHub.
 
 When reporting, please include:
 
@@ -68,3 +68,25 @@ Out of scope:
 - **`pre-commit` hook is opt-in.** Activate once per clone with
   `git config core.hooksPath .githooks`. The pytest scan is the
   belt-and-braces backstop.
+- **Optional CSRF guard.** Set `CSRF_ALLOWED_ORIGINS` to a
+  comma-separated list of the URLs you actually open Longbox at;
+  any non-GET request whose `Origin` doesn't match gets 403. Stops
+  a malicious site you visit in another tab from POSTing to
+  `/admin/wipe`. Default unset so the first-run experience stays
+  painless.
+- **Optional TrustedHost allowlist.** Set `ALLOWED_HOSTS` to the
+  hostnames you serve under (e.g. `longbox.lan,localhost`). Anything
+  else gets 400 — blocks Host-header spoofing when fronted by a
+  reverse proxy.
+- **SSRF guard on remote cover fetches.** `covers.download` resolves
+  the URL and refuses any address in a private / loopback /
+  link-local / reserved range. Stops a user-supplied
+  `cover_url_remote` from being used to probe internal LAN hosts
+  (or AWS-metadata-style `169.254.x.y` endpoints if Longbox is ever
+  cloud-deployed).
+- **Cover download size cap.** Streamed with a 10 MB ceiling — a
+  malicious upstream serving 500 MB can't OOM the container.
+- **Cover content validation.** Downloaded bytes are round-tripped
+  through Pillow; a server lying about `Content-Type` (claiming
+  `image/jpeg` while serving HTML) gets the payload dropped on the
+  floor before it lands in `/data/covers/`.

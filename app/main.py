@@ -6,7 +6,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.config import settings
+from app.middleware import OriginCheckMiddleware
 from app.migrations import run_migrations
 from app.routers import (
     add, admin, cleanup, comic_series, comics, containment, detail,
@@ -116,6 +119,17 @@ async def _render_error(request: Request, status: int, detail: str | None) -> HT
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Longbox", lifespan=lifespan)
+
+    # Wire optional security middleware. Both are no-ops unless the
+    # corresponding env var is set, so first-run / local-dev keeps
+    # working without configuration. Production / hardened deploys
+    # tighten via .env — see SECURITY.md.
+    allowed_hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+    if allowed_hosts and allowed_hosts != ["*"]:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    allowed_origins = OriginCheckMiddleware.parse_setting(settings.csrf_allowed_origins)
+    if allowed_origins:
+        app.add_middleware(OriginCheckMiddleware, allowed_origins=allowed_origins)
 
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
     app.mount("/covers", StaticFiles(directory=str(covers_dir())), name="covers")

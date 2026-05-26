@@ -1,6 +1,6 @@
 [project]
 name = "longbox"
-version = "1.1.6"
+version = "1.1.7"
 description = "Self-hosted comic library manager — catalog issues and trades, pull metadata from Wookieepedia / ComicVine / Metron / Open Library, track variants per copy."
 readme = "README.md"
 requires-python = ">=3.13"

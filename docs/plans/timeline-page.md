@@ -1,5 +1,11 @@
 # Star Wars Comics Timeline page
 
+> ⚠ **Planned, not yet implemented.** Preserved as a design doc for
+> when this feature gets built. The `/timeline` route, the
+> `services/timeline.py` module, and the template described below
+> don't exist in the current codebase. Tracked in
+> [ROADMAP.md](../../ROADMAP.md).
+
 ## Context
 
 The app already stores in-universe chronology data on every Wookieepedia-sourced comic — `Comic.timeline` (free-text BBY/ABY string like `"3956 BBY"` or `"3964–3962 BBY"`), `Comic.era` (broader label like `"Imperial"`), `Comic.canon` (`"canon"` / `"legends"` / `None`). Nothing in the UI exposes this for chronological browsing — the user wants a `/timeline` page that organises their owned Star Wars comics by in-universe year.
