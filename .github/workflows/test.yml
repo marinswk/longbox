@@ -31,7 +31,7 @@ jobs:
       # runs — uv-resolve and the playwright-style dep installs would
       # otherwise re-run on every push.
       - name: Build test image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: test
