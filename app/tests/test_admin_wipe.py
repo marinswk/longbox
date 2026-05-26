@@ -10,9 +10,9 @@ from sqlmodel import select
 from app.db import SessionLocal
 from app.main import create_app
 from app.models import (
-    Character, Comic, ComicArc, ComicCharacter, ComicCreator, ComicTag,
-    Copy, Creator, ImportRow, ImportSession, MetadataCache, Publisher,
-    Series, StoryArc, Tag,
+    Character, Comic, ComicArc, ComicCharacter, ComicContainment,
+    ComicCreator, ComicSeries, ComicTag, Copy, Creator, ImportRow,
+    ImportSession, MetadataCache, Publisher, Series, StoryArc, Tag,
 )
 
 
@@ -91,8 +91,8 @@ def test_wipe_with_confirmation_clears_every_user_data_table():
 
         for model in (Comic, Copy, Series, Publisher, Creator, Character,
                       StoryArc, Tag, ComicCreator, ComicCharacter,
-                      ComicArc, ComicTag, ImportSession, ImportRow,
-                      MetadataCache):
+                      ComicArc, ComicTag, ComicSeries, ComicContainment,
+                      ImportSession, ImportRow, MetadataCache):
             assert _row_count(model) == 0, f"{model.__name__} not empty after wipe"
 
 

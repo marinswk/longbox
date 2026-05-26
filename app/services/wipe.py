@@ -18,9 +18,9 @@ from sqlalchemy import delete as sa_delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
-    Character, Comic, ComicArc, ComicCharacter, ComicCreator, ComicTag,
-    Copy, Creator, ImportRow, ImportSession, MetadataCache, Publisher,
-    Series, StoryArc, Tag,
+    Character, Comic, ComicArc, ComicCharacter, ComicContainment,
+    ComicCreator, ComicSeries, ComicTag, Copy, Creator, ImportRow,
+    ImportSession, MetadataCache, Publisher, Series, StoryArc, Tag,
 )
 from app.services import covers
 
@@ -29,8 +29,9 @@ from app.services import covers
 # Keeping this co-located with the wipe avoids dragging in `portability`
 # (which omits the import-wizard tables).
 _TABLES_TO_WIPE = [
-    # Join tables first.
+    # Join + link tables first — anything referencing Comic or Series.
     ComicTag, ComicArc, ComicCharacter, ComicCreator,
+    ComicSeries, ComicContainment,
     # Per-row state for the import wizard.
     ImportRow, ImportSession,
     # Then leaf entity rows.
