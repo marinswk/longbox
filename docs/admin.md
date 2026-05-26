@@ -20,8 +20,11 @@ expect before downloading.
 Drop a `.zip` (full backup) or `.json` (data only) into the form. Hits
 `/admin/import` which:
 
-1. Validates the JSON schema-version (accepts v2 + v3; v2 backups have
-   their unused `Series.fandom` field silently stripped before import)
+1. Validates the JSON schema-version (accepts v2, v3, v4 — v4 added
+   the `ComicSeries` + `ComicContainment` link tables so a backup
+   round-trips multi-series memberships and containment relationships;
+   v2 backups have their unused `Series.fandom` field silently
+   stripped before import)
 2. Truncates every user-data table inside a single SQL transaction
 3. Re-inserts every row + writes cover files back to disk
 4. Commits

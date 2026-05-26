@@ -6,13 +6,14 @@ sub-section of the admin hub:
 
   GET  /admin/import/csv                          step 1 — upload form
   POST /admin/import/csv                          step 1 — accept file → parse → redirect
-  GET  /admin/import/csv/{token}/map              step 2 — column mapping (TODO)
-  POST /admin/import/csv/{token}/map              step 2 — save mapping (TODO)
-  GET  /admin/import/csv/{token}/config           step 3 — sources picker (TODO)
-  POST /admin/import/csv/{token}/config           step 3 — save config (TODO)
-  GET  /admin/import/csv/{token}/resolve          step 4 — per-row search/picker (TODO)
-  POST /admin/import/csv/{token}/pick             step 4 — pick a candidate (TODO)
-  POST /admin/import/csv/{token}/commit           step 5 — apply (TODO)
+  GET  /admin/import/csv/{token}/map              step 2 — column mapping
+  POST /admin/import/csv/{token}/map              step 2 — save mapping
+  GET  /admin/import/csv/{token}/config           step 3 — sources picker
+  POST /admin/import/csv/{token}/config           step 3 — save config
+  GET  /admin/import/csv/{token}/resolve          step 4 — per-row search/picker
+  POST /admin/import/csv/{token}/rows/{row_id}/*  step 4 — per-row state transitions
+  GET  /admin/import/csv/{token}/commit           step 5 — pre-flight summary
+  POST /admin/import/csv/{token}/commit           step 5 — apply (run commit pipeline)
 """
 
 from __future__ import annotations

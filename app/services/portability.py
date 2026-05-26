@@ -34,7 +34,9 @@ from app.models import (
     Comic,
     ComicArc,
     ComicCharacter,
+    ComicContainment,
     ComicCreator,
+    ComicSeries,
     ComicTag,
     Copy,
     Creator,
@@ -45,13 +47,18 @@ from app.models import (
 )
 
 # Bumped to 2 when Wishlist + PullList tables were dropped, then to 3
-# when fandom moved from Series → Comic. v2 backups still import — we
-# silently drop any (unused) `Series.fandom` field if present.
-EXPORT_VERSION = 3
-_ACCEPTED_IMPORT_VERSIONS = {2, 3}
+# when fandom moved from Series → Comic, then to 4 when the
+# multi-series (ComicSeries) and containment (ComicContainment) link
+# tables became part of the export so backups round-trip cleanly.
+# Older backups still import; they're just missing the link rows and
+# come back without multi-series memberships / containment edges.
+EXPORT_VERSION = 4
+_ACCEPTED_IMPORT_VERSIONS = {2, 3, 4}
 
 # Order matters for both export (cosmetic) and import (FK satisfaction).
 # Parents come before children: Publisher -> Series -> Comic -> Copy/joins.
+# Link tables come after both endpoints are inserted so their FKs are
+# satisfied at flush time.
 _ENTITIES_IN_ORDER: list[tuple[str, type]] = [
     ("publishers", Publisher),
     ("series", Series),
@@ -65,6 +72,8 @@ _ENTITIES_IN_ORDER: list[tuple[str, type]] = [
     ("comic_characters", ComicCharacter),
     ("comic_arcs", ComicArc),
     ("comic_tags", ComicTag),
+    ("comic_series", ComicSeries),
+    ("comic_containment", ComicContainment),
 ]
 
 # Reverse order for delete-all so FKs come down cleanly.
