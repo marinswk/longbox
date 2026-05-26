@@ -129,6 +129,32 @@ truth.
    via the template's `for href, label in [...]` block).
 5. Test file `app/tests/test_foo.py`.
 
+## Branch protection
+
+The `main` branch is protected by a ruleset (defined at
+[`.github/rulesets/main-protection.json`](.github/rulesets/main-protection.json)).
+What it enforces:
+
+- No direct pushes to `main` — every change goes through a PR.
+- The `pytest (Docker test stage)` status check must pass before merge.
+- The PR branch must be up to date with `main` before merge (strict).
+- Force pushes and branch deletion are blocked.
+- The repository owner can bypass in emergencies (the JSON's
+  `bypass_actors` block).
+
+To re-apply the ruleset after a manual change or repo move:
+
+```bash
+gh api repos/marinswk/longbox/rulesets --method POST \
+   --input .github/rulesets/main-protection.json
+```
+
+To preview the current state:
+
+```bash
+gh api repos/marinswk/longbox/rulesets
+```
+
 ## Commit messages
 
 Look at recent commits for the in-repo style. The basics:
