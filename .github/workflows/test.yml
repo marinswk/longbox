@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same ref when a new push arrives.
+# A long-running suite shouldn't gate a fix-up commit pushed 30s later.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Docker test stage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the `test` target of the project's Dockerfile and load
+      # it into the local daemon. `gha` cache shares layers across
+      # runs — uv-resolve and the playwright-style dep installs would
+      # otherwise re-run on every push.
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          load: true
+          tags: longbox-test:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the suite
+        # Same canonical command CONTRIBUTING.md tells contributors to
+        # run locally. Keeping CI and local identical avoids "passes
+        # on my machine" drift.
+        run: docker run --rm longbox-test:ci

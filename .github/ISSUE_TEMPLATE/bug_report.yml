@@ -1,0 +1,63 @@
+name: Bug report
+description: Something didn't behave the way you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing! A few short questions to keep the back-and-forth
+        minimal.
+
+        **Security issues**: please don't open a public bug report. See
+        [SECURITY.md](https://github.com/marinswk/longbox/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Longbox version
+      description: Either the tag on the `/admin` page or the output of `curl /health`.
+      placeholder: "1.1.7"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How are you running Longbox?
+      options:
+        - Docker (compose)
+        - Portainer stack
+        - Local Python (uv run uvicorn)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected to see.
+      placeholder: |
+        I clicked X and got Y; expected Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to /library
+        2. Click ...
+        3. ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / screenshots
+      description: |
+        `docker logs longbox` output around the failure usually has enough.
+        Drag screenshots straight into the field.
+      render: shell

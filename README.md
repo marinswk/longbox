@@ -190,6 +190,7 @@ docker-compose.yml   single-container production deploy
 ROADMAP.md           living backlog
 CLAUDE.md            project context for future AI-pair-coding sessions
 CONTRIBUTING.md      how to set up dev, run tests, send PRs
+CODE_OF_CONDUCT.md   Contributor Covenant 2.1
 SECURITY.md          how to report vulnerabilities
 LICENSE              MIT
 ```
@@ -199,7 +200,8 @@ LICENSE              MIT
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test workflow,
-commit conventions, and pre-commit hooks.
+commit conventions, and pre-commit hooks. Participation in this project
+is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Reporting a security issue: see [SECURITY.md](SECURITY.md).
 

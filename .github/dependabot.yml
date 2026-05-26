@@ -1,0 +1,60 @@
+version: 2
+updates:
+  # Python deps managed via pyproject.toml + uv.lock.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      # Roll FastAPI + Starlette + Pydantic patches into one PR — they
+      # release together often enough that separate PRs would be noisy.
+      fastapi-stack:
+        patterns:
+          - fastapi
+          - starlette
+          - pydantic*
+          - sqlmodel
+          - sqlalchemy
+      # Same for the HTTP / DB transports.
+      transport:
+        patterns:
+          - httpx
+          - aiosqlite
+          - alembic
+          - greenlet
+      # Test deps in their own group so test-only bumps don't touch
+      # runtime PRs.
+      dev:
+        dependency-type: development
+
+  # GitHub Actions versions (test.yml workflow).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+
+  # Base image in Dockerfile (python:3.13-slim, playwright/python).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+      day: 1
+      time: "07:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - docker

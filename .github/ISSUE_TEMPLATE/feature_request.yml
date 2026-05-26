@@ -1,0 +1,37 @@
+name: Feature request
+description: A new capability you'd like Longbox to grow.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please skim [ROADMAP.md](https://github.com/marinswk/longbox/blob/main/ROADMAP.md)
+        — your idea may already be tracked, or may be on the explicit
+        "out of scope" list (wishlist / loan tracking / pull list / cost
+        KPIs / built-in reader).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today that you'd like to?
+      placeholder: |
+        I want to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Your suggested solution
+      description: How would this work from a user's perspective?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Workarounds you tried, or other shapes the feature could take.
+    validations:
+      required: false
