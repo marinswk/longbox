@@ -145,6 +145,20 @@ def test_coverage_titles_full_book_reprint_still_credits_book():
     assert "Revelations (2023) 1" in titles
 
 
+def test_coverage_titles_include_books_credits_whole_issue_half():
+    """With `include_books=True`, a combined "Story (Issue N)" entry
+    credits the issue half too — used for same-series TPBs that collect
+    whole issues (e.g. the Star Wars Adventures Flight-of-the-Falcon
+    TPB collecting issues 14–18). Default (False) still omits it."""
+    entry = "Flight of the Falcon, Part 1 (Star Wars Adventures (2017) 14)"
+    # Default: book half omitted.
+    assert "Star Wars Adventures (2017) 14" not in coverage_titles(entry)
+    # Opt-in: book half present alongside story + verbatim.
+    with_books = coverage_titles(entry, include_books=True)
+    assert "Star Wars Adventures (2017) 14" in with_books
+    assert "Flight of the Falcon, Part 1" in with_books
+
+
 def test_coverage_titles_plain_entries_yield_only_themselves():
     titles = coverage_titles("Darth Vader (2020) 42\nDarth Vader (2020) 43")
     assert titles == {"Darth Vader (2020) 42", "Darth Vader (2020) 43"}

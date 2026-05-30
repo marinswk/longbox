@@ -1094,3 +1094,67 @@ def test_backfill_dedup_expected_issues_cleans_stored_blob():
     # our row is already clean, so re-reading it must be unchanged.
     expected2, _ = asyncio.run(_read())
     assert expected2 == "BD 1\nBD 2\nBD 3"
+
+
+def test_match_owned_credits_whole_issue_from_same_series_tpb():
+    """A same-series TPB whose Wookieepedia Contents list one story per
+    WHOLE issue ("Flight of the Falcon, Part 1 (Star Wars Adventures
+    (2017) 14)") must credit the issue itself — the TPB collects the
+    entire issue, not a fragment. Regression for /series/240 where
+    issues 14–20 (owned via the Vol. 6 + Vol. 8 TPBs) showed as
+    missing."""
+    from app.services.series_progress import match_owned
+
+    vol6 = Comic(
+        title="SWA Vol. 6", source_id="SWA Vol. 6",
+        collected_issues="\n".join([
+            "Flight of the Falcon, Part 1 (Star Wars Adventures (2017) 14)",
+            "Flight of the Falcon, Part 2 (Star Wars Adventures (2017) 15)",
+            "Star Wars Adventures: Flight of the Falcon",
+        ]),
+    )
+    vol8 = Comic(
+        title="SWA Vol. 8", source_id="SWA Vol. 8",
+        collected_issues="\n".join([
+            "Raiders of the Lost Gundark (Star Wars Adventures (2017) 18)",
+            "Star Wars Adventures (2017) 19",   # plain entry
+            "Star Wars Adventures (2017) 20",
+        ]),
+    )
+    expected = [f"Star Wars Adventures (2017) {n}" for n in (14, 15, 18, 19, 20)]
+    pairs, owned = match_owned(expected, [vol6, vol8])
+    by_title = {p.title: p for p in pairs}
+    assert by_title["Star Wars Adventures (2017) 14"].trade is vol6
+    assert by_title["Star Wars Adventures (2017) 15"].trade is vol6
+    assert by_title["Star Wars Adventures (2017) 18"].trade is vol8
+    assert by_title["Star Wars Adventures (2017) 19"].trade is vol8
+    assert by_title["Star Wars Adventures (2017) 20"].trade is vol8
+    assert owned == 5
+
+
+def test_match_owned_book_credit_is_scoped_to_linked_comics():
+    """The whole-issue (book) credit only applies to series-LINKED
+    comics, not to the whole-library trade_pool. A TPB from another
+    series that merely reprints one story from a multi-story anthology
+    one-shot must NOT mark that one-shot owned (the Revelations guard,
+    now via the include_books scoping)."""
+    from app.services.series_progress import match_owned
+
+    # Linked: a same-series TPB collecting the whole issue → credited.
+    linked = Comic(
+        title="Linked TPB", source_id="Linked TPB",
+        collected_issues="Some Story (Owned Series 5)",
+    )
+    # Pool-only: another series' TPB reprinting one anthology story.
+    pool_only = Comic(
+        title="Other TPB", source_id="Other TPB",
+        collected_issues="Bonus Tale (Anthology One-Shot 1)",
+    )
+    expected = ["Owned Series 5", "Anthology One-Shot 1"]
+    pairs, owned = match_owned(expected, [linked], trade_pool=[linked, pool_only])
+    by_title = {p.title: p for p in pairs}
+    # Linked same-series TPB credits its whole issue.
+    assert by_title["Owned Series 5"].trade is linked
+    # Pool-only cross-series reprint does NOT credit the host one-shot.
+    assert by_title["Anthology One-Shot 1"].trade is None
+    assert owned == 1

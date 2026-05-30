@@ -301,15 +301,17 @@ def parse_entries(raw: str | None) -> list[CollectedEntry]:
     return out
 
 
-def coverage_titles(raw: str | None) -> set[str]:
+def coverage_titles(raw: str | None, *, include_books: bool = False) -> set[str]:
     """Every issue / story title a `collected_issues` blob covers, for
     series-progress and duplicate matching.
 
     A plain entry contributes its own title. A combined StoryCite
-    entry — `"<story> (<book N>)"` — contributes TWO keys:
+    entry — `"<story> (<book N>)"` — contributes:
 
       * the verbatim line  ("Tool of the Empire (Revelations (2023) 1)")
       * the story title    ("Tool of the Empire")
+      * the book/issue half ("Revelations (2023) 1") — ONLY when
+        `include_books=True`.
 
     The story key attributes an anthology one-shot's contents to each
     contributing series — Wookieepedia lists the story ("Tool of the
@@ -318,16 +320,24 @@ def coverage_titles(raw: str | None) -> set[str]:
     *Revelations (2023) 1*, so a trade that collects the story has to
     match the series on the story NAME, not on the host book.
 
-    The **book** title is intentionally NOT added. Collecting one
-    story from a multi-story one-shot doesn't mean the user owns the
-    host book; falsely marking it owned was what caused
-    `Revelations (2023) 1` to appear "owned" under the One-shots
-    umbrella just because some Doctor Aphra TPB picked up a single
-    story from it. A trade that legitimately collects the whole book
-    records it as a plain (non-combined) entry — the verbatim line is
-    then the book title and gets added via the `out.add(e.text)`
-    branch above. So full-book reprints still count; story-only
-    reprints don't claim the host book.
+    The **book** half is gated behind `include_books` because the
+    correct answer depends on caller context:
+
+      * For an anthology one-shot, collecting ONE story from it
+        (`Tall Tales (Revelations (2023) 1)`) does NOT mean the user
+        owns the whole `Revelations (2023) 1` book — crediting it
+        would falsely mark the one-shot owned. So `include_books`
+        stays `False` for cross-series / whole-library matching.
+      * For a regular ongoing issue, the Wookieepedia Contents list a
+        story PER WHOLE ISSUE (`Flight of the Falcon, Part 1 (Star Wars
+        Adventures (2017) 14)`), so the TPB does collect the entire
+        issue and the book half SHOULD be credited. Callers that know
+        the trade is a same-series collection (e.g. `match_owned` for
+        comics LINKED to the series) pass `include_books=True`.
+
+    A trade that lists the issue plainly (`[[Star Wars Adventures
+    (2017) 19]]`, no story wrapper) always credits it via the verbatim
+    `out.add(e.text)` branch regardless of `include_books`.
     """
     out: set[str] = set()
     for e in parse_entries(raw):
@@ -337,4 +347,6 @@ def coverage_titles(raw: str | None) -> set[str]:
         combined = _split_combined(e.text)
         if combined:
             out.add(combined[0])  # story half — see docstring
+        if include_books and e.article_id:
+            out.add(e.article_id)  # book / whole-issue half
     return out

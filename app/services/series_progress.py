@@ -49,18 +49,19 @@ def _trailing_number(label: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _collected_titles(comic: Comic) -> set[str]:
+def _collected_titles(comic: Comic, *, include_books: bool = False) -> set[str]:
     """Return the set of issue / story titles a comic's
     `collected_issues` blob can satisfy.
 
-    Combined "Story (Book)" StoryCite entries contribute the story
-    title, the book title AND the verbatim line — see
-    `coverage_titles`. The story key is what lets a trade that
-    collects an anthology one-shot's story (e.g. "Tool of the
-    Empire", published inside "Revelations (2023) 1") count toward a
-    series that lists the story itself as an issue."""
+    `include_books` credits the book/whole-issue half of a combined
+    "Story (Issue N)" StoryCite entry — appropriate when the trade is
+    a SAME-SERIES collection (it collects whole issues, e.g. the
+    *Flight of the Falcon* TPB collecting *Star Wars Adventures* 14–18).
+    Left False for cross-series matching so reprinting one story from a
+    multi-story anthology one-shot doesn't falsely mark the host book
+    owned. See `coverage_titles` for the full rationale."""
     from app.services.collected_issues import coverage_titles
-    return coverage_titles(comic.collected_issues)
+    return coverage_titles(comic.collected_issues, include_books=include_books)
 
 
 # Natural sort key so "Vader 2" sorts before "Vader 10" (a plain
@@ -165,11 +166,22 @@ def match_owned(
     # vice versa. Linked comics are indexed FIRST so they win the
     # display attribution when both a linked and an unrelated trade
     # cover the same issue.
+    #
+    # `include_books` differs by pool: the series-LINKED `comics`
+    # collect whole issues of THIS series, so a combined "Story
+    # (Issue N)" entry credits issue N (the *Flight of the Falcon* TPB
+    # collecting *Star Wars Adventures* 14–18). The whole-library
+    # `trade_pool` does NOT credit book halves — a TPB from another
+    # series that merely reprints one story from a multi-story
+    # anthology one-shot must not mark that one-shot owned (the
+    # `Revelations (2023) 1` regression guard).
     trade_index: dict[str, Comic] = {}
-    pools = [comics] if trade_pool is None else [comics, trade_pool]
-    for pool in pools:
+    pools: list[tuple[list[Comic], bool]] = [(comics, True)]
+    if trade_pool is not None:
+        pools.append((trade_pool, False))
+    for pool, include_books in pools:
         for c in pool:
-            for title in _collected_titles(c):
+            for title in _collected_titles(c, include_books=include_books):
                 trade_index.setdefault(title, c)
                 norm = strip_disambiguator(title)
                 if norm and norm != title:
