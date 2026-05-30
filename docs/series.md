@@ -89,10 +89,27 @@ linking and CSV-imported comics whose source_id was a guess.
 **Trade credit (independent).** The comic's `collected_issues` covers
 the expected article. This uses the `coverage_titles` set computed
 from a comic's collected_issues blob, which includes story-half
-attributions for combined `"Story (Book)"` entries — so a trade
-collecting just one story from a multi-story anthology one-shot
-credits the STORY, but not the host book. (Pre-fix bug; see
-[ROADMAP.md](../ROADMAP.md).)
+attributions for combined `"Story (Issue N)"` entries.
+
+The book/whole-issue half of a combined entry is credited **only for
+trades LINKED to the series being matched** (`include_books=True`),
+not for the whole-library trade pool. The reason is two genuinely
+different cases that share the same `"Story (Issue)"` shape:
+
+- A **same-series TPB** — e.g. *Star Wars Adventures, Vol. 6: Flight
+  of the Falcon* whose Contents list one story per WHOLE issue
+  (`Flight of the Falcon, Part 1 (Star Wars Adventures (2017) 14)`).
+  The TPB collects the entire issue, so issue 14 counts as owned.
+- A **cross-series anthology reprint** — e.g. a Doctor Aphra TPB that
+  reprints just one story (`Tall Tales`) from the multi-story one-shot
+  *Revelations (2023) 1*. Owning that story does NOT mean you own the
+  whole one-shot, so the host book must NOT be marked owned under the
+  One-shots umbrella.
+
+Series-linkage is the discriminator: the first is linked to the series
+(it's that series' TPB); the second only appears in the whole-library
+pool. The `/missing` page uses the coarser "covered anywhere" rule and
+credits whole-issue halves unconditionally.
 
 ## Series-level dedup
 

@@ -231,12 +231,21 @@ async def _crawl() -> None:
 def _owned_coverage(comics: list[Comic]) -> set[str]:
     """Every issue/TPB title the library covers — each comic's own
     `source_id` plus every issue inside its `collected_issues`, with
-    disambiguator-stripped variants folded in for redirect tolerance."""
+    disambiguator-stripped variants folded in for redirect tolerance.
+
+    `include_books=True`: a TPB whose Contents lists a story per whole
+    issue ("Flight of the Falcon, Part 1 (Star Wars Adventures (2017)
+    14)") collects that entire issue, so the issue counts as covered —
+    otherwise owned-via-TPB issues wrongly showed up as "missing" on
+    `/missing`. The /missing view is a coarse "do you have this content
+    anywhere" check, so the rare false positive (a partially-reprinted
+    anthology one-shot marked covered) is an acceptable trade for not
+    flagging issues you demonstrably own."""
     covered: set[str] = set()
     for c in comics:
         if c.source_id:
             covered.add(c.source_id)
-        covered |= coverage_titles(c.collected_issues)
+        covered |= coverage_titles(c.collected_issues, include_books=True)
     covered |= {strip_disambiguator(t) for t in covered}
     return covered
 
