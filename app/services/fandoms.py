@@ -397,6 +397,56 @@ async def backfill_single_issue_format() -> int:
         return int(result.rowcount or 0)
 
 
+async def backfill_dedup_expected_issues() -> int:
+    """Remove duplicate lines from every `Series.expected_issues` (and
+    `Series.canceled_issues`) blob, preserving first-seen order.
+    Idempotent — no-op once every list is already unique.
+
+    Some Wookieepedia issue tables list the same issue more than once
+    (e.g. *Star Wars Adventures* 14–18 appear under both the Vol. 6 and
+    Vol. 7 `{{Comictable-issue}}` groupings). Before the parser learned
+    to de-dup, those duplicates were stored verbatim, inflating the
+    series' expected-issue count and double-counting trade matches. The
+    read path (`series_progress.parse_expected`) now de-dups defensively,
+    so this backfill is mostly about keeping the STORED blob — and any
+    backup/export taken from it — clean.
+
+    Returns the number of Series rows whose stored blobs changed.
+    """
+    from app.models import Series
+
+    def _dedup(blob: str | None) -> str | None:
+        if not blob:
+            return blob
+        seen: set[str] = set()
+        out: list[str] = []
+        for line in blob.split("\n"):
+            key = line.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+        return "\n".join(out)
+
+    changed = 0
+    async with SessionLocal() as session:
+        rows = (await session.exec(
+            select(Series).where(Series.expected_issues.is_not(None))
+        )).all()
+        for series in rows:
+            new_expected = _dedup(series.expected_issues)
+            new_canceled = _dedup(series.canceled_issues)
+            if (new_expected != series.expected_issues
+                    or new_canceled != series.canceled_issues):
+                series.expected_issues = new_expected
+                series.canceled_issues = new_canceled
+                session.add(series)
+                changed += 1
+        if changed:
+            await session.commit()
+    return changed
+
+
 async def backfill_strip_bogus_movie_adaptation_links() -> int:
     """Drop ComicSeries links to a series named `Star Wars Movie
     Adaptations` from comics whose own title doesn't look like a movie

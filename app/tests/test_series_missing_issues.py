@@ -128,6 +128,43 @@ def test_get_series_issues_parses_volumes_section_for_tpb_series():
     ]
 
 
+# Some Wookieepedia issue tables list the same issue twice — once per
+# overlapping TPB grouping. `{{Comictable-issue}}` rows are emitted by
+# `_extract_comictable_issues`, and `get_series_issues` must de-dup the
+# combined output (preserving first-seen order).
+
+DUP_ISSUES_WIKITEXT = (
+    "{{Top|rwm|can}}\n"
+    "{{ComicSeries|title=''Dup Series''|publisher=[[IDW]]}}\n"
+    "==Issues==\n"
+    "{{Comictable-issue|1|[[Dup Series 1|''Dup Series'' 1]]|date|collected}}\n"
+    "{{Comictable-issue|2|[[Dup Series 2|''Dup Series'' 2]]|date|collected}}\n"
+    "{{Comictable-issue|3|[[Dup Series 3|''Dup Series'' 3]]|date|collected}}\n"
+    # Vol. 2 re-lists issues 2 + 3 (overlapping TPB grouping).
+    "{{Comictable-issue|2|[[Dup Series 2|''Dup Series'' 2]]|date|collected}}\n"
+    "{{Comictable-issue|3|[[Dup Series 3|''Dup Series'' 3]]|date|collected}}\n"
+    "{{Comictable-issue|4|[[Dup Series 4|''Dup Series'' 4]]|date|collected}}\n"
+    "==External links==\n"
+)
+
+
+@respx.mock
+def test_get_series_issues_dedups_repeated_comictable_rows():
+    def _route(request: httpx.Request) -> httpx.Response:
+        if parse_qs(urlparse(str(request.url)).query).get("action", [None])[0] == "parse":
+            return httpx.Response(200, json={
+                "parse": {"title": "Dup Series", "wikitext": {"*": DUP_ISSUES_WIKITEXT}},
+            })
+        return httpx.Response(404)
+
+    respx.get("https://starwars.fandom.com/api.php").mock(side_effect=_route)
+    with _client():
+        pass
+    issues = asyncio.run(wookieepedia.get_series_issues("Dup Series"))
+    # Six rows but only four unique issues — first-seen order preserved.
+    assert issues == ["Dup Series 1", "Dup Series 2", "Dup Series 3", "Dup Series 4"]
+
+
 # Hierarchical `series=` infobox: level-1 is the broad franchise,
 # level-2 is the specific comic series the issue belongs to. The
 # parser must pick the level-2 entry, not the franchise — otherwise
@@ -959,3 +996,101 @@ def test_comic_detail_links_to_series_page():
         # Series name appears as a link to the series detail page.
         assert 'href="/series/' in page
         assert "Linked Series" in page
+
+
+def test_parse_expected_dedups_and_sorts_numerically():
+    """`parse_expected` is the read chokepoint for the series detail
+    checklist + the progress denominator. It must:
+      * drop duplicate lines (Wookieepedia lists some issues twice
+        across overlapping TPB groupings),
+      * sort numbered issues numerically (the "9 renders after 11"
+        complaint), with un-numbered specials after the numbered runs.
+    """
+    from app.services.series_progress import parse_expected
+
+    series = Series(
+        name="SWA",
+        # Upstream (messy) order: collection-grouped, 9 after 11, with
+        # issue 14 and Annual 2018 each listed twice.
+        expected_issues="\n".join([
+            "SWA Ashcan",
+            "SWA 1",
+            "SWA 8",
+            "SWA 10",
+            "SWA 11",
+            "SWA Annual 2018",
+            "SWA 9",
+            "SWA 12",
+            "SWA 14",
+            "SWA 14",            # duplicate
+            "SWA Annual 2018",   # duplicate
+            "SWA 2",
+        ]),
+    )
+    result = parse_expected(series)
+    # 12 lines − 2 dups = 10 unique.
+    assert len(result) == 10
+    assert result.count("SWA 14") == 1
+    assert result.count("SWA Annual 2018") == 1
+    # Numbered issues come first, in numeric order (9 BEFORE 11, 10 not
+    # before 2 — natural sort).
+    numbered = [r for r in result if r.split()[-1].isdigit()
+                and int(r.split()[-1]) < 1900]
+    assert numbered == [
+        "SWA 1", "SWA 2", "SWA 8", "SWA 9",
+        "SWA 10", "SWA 11", "SWA 12", "SWA 14",
+    ]
+    # Specials trail the numbered run.
+    assert result[-2:] == ["SWA Annual 2018", "SWA Ashcan"]
+
+
+def test_parse_expected_excludes_canceled_after_dedup():
+    """Canceled entries are still removed, and dedup doesn't resurrect
+    them."""
+    from app.services.series_progress import parse_expected
+
+    series = Series(
+        name="C",
+        expected_issues="C 1\nC 2\nC 2\nC 3\nC 3",
+        canceled_issues="C 3",
+    )
+    result = parse_expected(series)
+    assert result == ["C 1", "C 2"]
+
+
+def test_backfill_dedup_expected_issues_cleans_stored_blob():
+    """The lifespan backfill removes duplicate lines from stored
+    expected_issues / canceled_issues, preserving first-seen order,
+    and is idempotent."""
+    from app.services.fandoms import backfill_dedup_expected_issues
+
+    async def _seed():
+        async with SessionLocal() as s:
+            ser = Series(
+                name="BD Dedup Series",
+                expected_issues="BD 1\nBD 2\nBD 2\nBD 3\nBD 1",
+                canceled_issues="BD 3\nBD 3",
+            )
+            s.add(ser)
+            await s.commit()
+            return ser.id
+    sid = asyncio.run(_seed())
+
+    changed = asyncio.run(backfill_dedup_expected_issues())
+    assert changed >= 1
+
+    async def _read():
+        async with SessionLocal() as s:
+            ser = await s.get(Series, sid)
+            return ser.expected_issues, ser.canceled_issues
+    expected, canceled = asyncio.run(_read())
+    # Dedup preserves first-seen order (NOT sorted at storage layer).
+    assert expected == "BD 1\nBD 2\nBD 3"
+    assert canceled == "BD 3"
+
+    # Idempotent: a second run changes nothing for this row.
+    again = asyncio.run(backfill_dedup_expected_issues())
+    # `again` counts rows changed across the whole (shared) test DB;
+    # our row is already clean, so re-reading it must be unchanged.
+    expected2, _ = asyncio.run(_read())
+    assert expected2 == "BD 1\nBD 2\nBD 3"

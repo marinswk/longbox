@@ -1626,6 +1626,29 @@ async def get_series_canceled_issues(article_title: str) -> list[str]:
 
 
 async def get_series_issues(article_title: str) -> list[str]:
+    """Fetch the issue (or volume) list off a *series* article,
+    de-duplicated while preserving first-seen order.
+
+    De-dup is applied here (rather than in each extractor) so every
+    return path is covered. It matters because some Wookieepedia
+    issue tables list the same issue more than once — e.g.
+    *Star Wars Adventures* 14–18 appear under both the Vol. 6 and
+    Vol. 7 `{{Comictable-issue}}` groupings, and `_extract_comictable_issues`
+    faithfully emits each row. Storing the duplicates would inflate
+    the series' expected-issue count and double-count trade matches.
+    """
+    issues = await _get_series_issues_raw(article_title)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for title in issues:
+        if title in seen:
+            continue
+        seen.add(title)
+        deduped.append(title)
+    return deduped
+
+
+async def _get_series_issues_raw(article_title: str) -> list[str]:
     """Fetch the issue (or volume) list off a *series* article.
 
     `article_title` may optionally carry a `#SectionName` suffix to
