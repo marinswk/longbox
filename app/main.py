@@ -27,6 +27,7 @@ async def lifespan(_app: FastAPI):
     from app.services.cache import prune_expired
     from app.services.fandoms import (
         backfill_comic_series_links,
+        backfill_dedup_expected_issues,
         backfill_inferred_series_from_collected_issues,
         backfill_merge_duplicate_series, backfill_normalize_format,
         backfill_prune_dangling_comicseries,
@@ -96,6 +97,11 @@ async def lifespan(_app: FastAPI):
     # inference backfill so anything the inferrer just successfully
     # populated stays. Idempotent.
     await backfill_prune_empty_inferred_series()
+    # Drop duplicate lines from stored expected_issues / canceled_issues
+    # blobs (some Wookieepedia issue tables list an issue twice across
+    # overlapping TPB groupings). The read path de-dups defensively too;
+    # this keeps the stored blob + any backup/export clean. Idempotent.
+    await backfill_dedup_expected_issues()
     yield
 
 

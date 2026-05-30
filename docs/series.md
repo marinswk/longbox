@@ -43,7 +43,13 @@ Then:
   series. Auto-hidden if you don't own anything yet.
 - **ISSUES** — the expected list with per-issue owned / missing
   indicators. Owned issues link to their `/comic/{id}` page; missing
-  issues are shown as plain text.
+  issues are shown as plain text. The list is **de-duplicated and
+  naturally sorted** — Wookieepedia issue tables sometimes list an
+  issue twice (once per overlapping TPB grouping) and order rows by
+  collection rather than issue number, so a raw copy would show
+  "issue 9 after issue 11" and double-count. Numbered issues sort
+  ascending; un-numbered specials (Ashcan, Annual, FCBD one-shots)
+  trail the numbered run.
 - **REFRESH FROM SOURCE** — form to (re)pull the issue list from
   Wookieepedia / ComicVine / Metron. The series's source + source_id
   get persisted so the next refresh is one click.

@@ -63,20 +63,53 @@ def _collected_titles(comic: Comic) -> set[str]:
     return coverage_titles(comic.collected_issues)
 
 
+# Natural sort key so "Vader 2" sorts before "Vader 10" (a plain
+# string sort would put "10" before "2"). Mirrors `_natkey` in
+# `app/services/canon_index.py` — kept as a local copy to avoid a
+# module dependency between the two. For a single series every entry
+# shares the same name prefix (incl. any `(YYYY)` volume year), so the
+# sort falls through to the trailing issue number; specials without a
+# number ("Ashcan", "Annual 2018") sort after the numbered runs because
+# their differing prefix text compares later.
+def _natural_key(s: str) -> list:
+    return [
+        int(p) if p.isdigit() else p.lower()
+        for p in re.split(r"(\d+)", s)
+    ]
+
+
 def parse_expected(series: Series) -> list[str]:
     """Return the expected issue list MINUS any titles flagged as
-    canceled. Used by both the missing-issues detector + the
-    progress denominator. Canceled issues are tracked separately
-    on `Series.canceled_issues` (a sub-list of `expected_issues`)
-    so they can still be SHOWN — just not counted against the
-    user's completion percentage."""
+    canceled, **de-duplicated and naturally sorted**.
+
+    Used by both the missing-issues detector + the progress
+    denominator. Canceled issues are tracked separately on
+    `Series.canceled_issues` (a sub-list of `expected_issues`) so they
+    can still be SHOWN — just not counted against the user's completion
+    percentage.
+
+    De-duplication matters for correctness, not just looks: some
+    Wookieepedia issue tables list the same issue twice (once per
+    overlapping TPB grouping — e.g. *Star Wars Adventures* 14–18 sit
+    in both Vol. 6 and Vol. 7 rows), which would otherwise inflate the
+    denominator and double-count a trade match. Sorting fixes the
+    common "issue 9 renders after issue 11" complaint where the
+    upstream table is ordered by collection rather than issue number.
+    """
     raw = series.expected_issues or ""
     cancelled_raw = series.canceled_issues or ""
     cancelled = {line.strip() for line in cancelled_raw.split("\n") if line.strip()}
-    return [
-        line.strip() for line in raw.split("\n")
-        if line.strip() and line.strip() not in cancelled
-    ]
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in raw.split("\n"):
+        title = line.strip()
+        if not title or title in cancelled or title in seen:
+            continue
+        seen.add(title)
+        out.append(title)
+    out.sort(key=_natural_key)
+    return out
 
 
 def parse_canceled(series: Series) -> list[str]:
