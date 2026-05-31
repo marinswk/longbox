@@ -28,6 +28,21 @@ substring. Runs across Wookieepedia / ComicVine / Metron in parallel,
 returns up to 60 hits paginated 12 at a time. Useful when you don't have
 a number but know the title.
 
+### Source selector
+
+A row of checkboxes above the search box lets you choose which sources
+to query: **☑ Wookieepedia ☑ ComicVine ☑ Metron**. All *configured*
+sources start ticked. Unticking one removes its API call from that
+search entirely — faster results, and no rate-limit noise from a source
+you don't need (e.g. untick Wookieepedia when searching for a Marvel
+trade). A source with no API key renders disabled with a hint; add its
+key on **Admin → Sources** to enable it (no restart — the checkbox
+lights up immediately). The selection carries through pagination; a
+fresh search resets to all-configured.
+
+(Open Library is ISBN-only and isn't part of free-text search — its
+corpus is mostly non-comic books.)
+
 ## 3. Barcode scanner
 
 On `/add`, tap **📷 Scan**. The fullscreen overlay opens with the rear

@@ -202,6 +202,32 @@ _SOURCE_PRIORITY = {
 }
 
 
+# The sources `search_text` can query, in display order. Open Library
+# is excluded (ISBN-only — its text corpus is mostly non-comic books).
+_TEXT_SEARCH_SOURCES = [
+    ("wookieepedia", "Wookieepedia"),
+    ("comicvine", "ComicVine"),
+    ("metron", "Metron"),
+]
+
+
+def text_search_sources() -> list[dict]:
+    """`[{key, name, configured}]` for the sources free-text search can
+    query, with each source's live configured state. Single source of
+    truth for the per-source checkboxes on /add: Wookieepedia needs no
+    key (always configured); ComicVine / Metron reflect the credentials
+    saved on the admin page."""
+    checks = {
+        "wookieepedia": wookieepedia.is_configured,
+        "comicvine": comicvine.is_configured,
+        "metron": metron.is_configured,
+    }
+    return [
+        {"key": key, "name": name, "configured": checks[key]()}
+        for key, name in _TEXT_SEARCH_SOURCES
+    ]
+
+
 def _norm_tokens(s: str) -> set[str]:
     """Lowercase + alpha-tokenize a string for series-name overlap scoring."""
     import re as _re

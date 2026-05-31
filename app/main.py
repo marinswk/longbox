@@ -40,6 +40,12 @@ async def lifespan(_app: FastAPI):
     )
 
     await run_migrations()
+    # Load source credentials (ComicVine / Metron) from the DB into the
+    # process-global runtime cache, falling back to env. Must run after
+    # migrations (the `setting` table has to exist) and before any
+    # upstream lookups so `is_configured()` reflects saved keys.
+    from app.services.app_settings import hydrate_credentials
+    await hydrate_credentials()
     # Sweep stale metadata-cache rows on every cold start. Cheap (single
     # indexed DELETE) and keeps the table from growing unbounded across
     # months of upstream lookups.

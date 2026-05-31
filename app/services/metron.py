@@ -21,6 +21,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import settings
+from app.services.app_settings import CREDS
 from app.services.cache import get_or_set
 from app.services.errors import UpstreamRateLimit
 from app.services.schemas import CreatorRef, LookupCandidate
@@ -30,11 +31,13 @@ SOURCE = "metron"
 
 
 def is_configured() -> bool:
-    return bool(settings.metron_user and settings.metron_pass)
+    # Reads the runtime cache (DB values if set, else env) so creds
+    # saved on the /admin page take effect without a restart.
+    return bool(CREDS.metron_user and CREDS.metron_pass)
 
 
 def _auth() -> httpx.BasicAuth:
-    return httpx.BasicAuth(settings.metron_user or "", settings.metron_pass or "")
+    return httpx.BasicAuth(CREDS.metron_user or "", CREDS.metron_pass or "")
 
 
 def _headers() -> dict[str, str]:
