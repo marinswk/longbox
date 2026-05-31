@@ -744,6 +744,7 @@ async def add_lookup(request: Request, identifier: str = Form(...)) -> HTMLRespo
             "identifier": identifier,
             "candidates": [c.model_dump() for c in result.candidates],
             "rate_limited": result.rate_limited,
+            "unreachable": result.unreachable,
         },
     )
 
@@ -805,6 +806,8 @@ async def add_text_search(
             "q": q,
             "search_sources": available,
             "selected_sources": sorted(selected),
+            "rate_limited": [],
+            "unreachable": [],
         }
         base.update(extra)
         return templates.TemplateResponse(request, "partials/_picker.html", base)
@@ -832,6 +835,7 @@ async def add_text_search(
         "identifier": q,
         "candidates": [c.model_dump() for c in page_slice],
         "rate_limited": result.rate_limited,
+        "unreachable": result.unreachable,
         "page": page,
         "total_pages": total_pages,
         "total": total,

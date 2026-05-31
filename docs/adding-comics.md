@@ -43,6 +43,17 @@ fresh search resets to all-configured.
 (Open Library is ISBN-only and isn't part of free-text search — its
 corpus is mostly non-comic books.)
 
+**If a source is down**, the picker shows a red **"⚠ Some sources
+unreachable"** chip naming it, and still returns whatever the other
+sources found — so you can tell "the source is down" from "no match."
+(Metron in particular has had recurring server-overload outages.)
+
+**Query tip for Metron:** Metron filters by the literal *series name*,
+not full text, so it's reduced to the series base before querying —
+`"saga vol 1"` is searched as `"saga"`. ComicVine does its own fuzzy
+full-text matching. Either way, just type the series name and, if you
+like, the volume.
+
 ## 3. Barcode scanner
 
 On `/add`, tap **📷 Scan**. The fullscreen overlay opens with the rear

@@ -176,25 +176,52 @@ def _shallow_candidate_from_list_item(item: dict[str, Any]) -> Optional[LookupCa
     )
 
 
+# Metron's `series_name` is a literal (icontains) filter on the SERIES
+# name — not a full-text search like ComicVine's. A user query like
+# "saga vol 1" therefore matches no series (the series is "Saga"; "vol 1"
+# is the volume), so we strip a trailing volume marker before filtering.
+# "Saga Vol 1" / "Saga, Volume One" / "The Sandman Vol. 1: …" → series base.
+_VOLUME_MARKER = re.compile(
+    r"[\s:,\-–—]+(?:vol\.?|volume|book|part|tp|tpb)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _series_name_for_query(query: str) -> str:
+    """Reduce a user query to the series-name portion Metron can filter
+    on. Strips a trailing volume marker; returns the original (trimmed)
+    string when there's nothing to strip."""
+    q = (query or "").strip()
+    base = _VOLUME_MARKER.sub("", q).strip(" :,-–—")
+    return base or q
+
+
 async def search_text(query: str) -> list[LookupCandidate]:
     """Free-text search via `/api/issue/?series_name=<q>`. Capped at
     `TEXT_SEARCH_LIMIT` to keep latency bounded. Returns shallow
     candidates that get hydrated via `get_issue` when the user picks one.
+
+    The query is reduced to its series-name portion first (see
+    `_series_name_for_query`) because Metron's `series_name` is a literal
+    series-name filter, not a full-text search — so "saga vol 1" would
+    otherwise match nothing.
     """
     if not is_configured():
         return []
+
+    series_name = _series_name_for_query(query)
 
     async def fetch() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0, auth=_auth(), headers=_headers()) as client:
             r = await client.get(
                 f"{BASE_URL}/issue/",
-                params={"series_name": query, "page": 1},
+                params={"series_name": series_name, "page": 1},
             )
             _check_rate_limited(r)
             r.raise_for_status()
             return r.json()
 
-    payload = await get_or_set(source=SOURCE, key=f"search-text:{query}", fetch=fetch)
+    payload = await get_or_set(source=SOURCE, key=f"search-text:{series_name}", fetch=fetch)
     out: list[LookupCandidate] = []
     for item in (payload.get("results") or [])[:TEXT_SEARCH_LIMIT]:
         if isinstance(item, dict):

@@ -109,3 +109,16 @@ def test_aggregator_upc_handles_metron_throttled():
         pass
     result = asyncio.run(lookup_full(upc))
     assert "metron" in result.rate_limited
+
+
+def test_series_name_for_query_strips_volume_marker():
+    """Metron's series_name is a literal series filter, so 'saga vol 1'
+    is reduced to the series base 'saga' (else it matches nothing)."""
+    from app.services.metron import _series_name_for_query
+    assert _series_name_for_query("saga vol 1") == "saga"
+    assert _series_name_for_query("Saga, Volume One") == "Saga"
+    assert _series_name_for_query("The Sandman Vol. 1: Preludes") == "The Sandman"
+    assert _series_name_for_query("Immortal Hulk TPB") == "Immortal Hulk"
+    # No marker → unchanged.
+    assert _series_name_for_query("Saga") == "Saga"
+    assert _series_name_for_query("Y The Last Man") == "Y The Last Man"

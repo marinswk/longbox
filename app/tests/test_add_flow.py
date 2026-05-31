@@ -324,3 +324,19 @@ def test_text_search_no_sources_selected_shows_hint(monkeypatch):
         assert r.status_code == 200
         assert "No source selected" in r.text
         assert called["n"] == 0
+
+
+def test_text_search_shows_unreachable_source_warning(monkeypatch):
+    """When a source is unreachable, the picker shows a visible warning
+    instead of silently dropping it (the Metron-down case)."""
+    from app.services.aggregator import LookupResult
+
+    async def _fake_search(q, *, sources=None):
+        return LookupResult(candidates=[], rate_limited=[], unreachable=["metron"])
+
+    monkeypatch.setattr("app.routers.add.aggregator_search_text", _fake_search)
+    with _client() as client:
+        r = client.post("/add/text-search", data={"q": "saga", "sources": "metron"})
+        assert r.status_code == 200
+        assert "unreachable" in r.text.lower()
+        assert "metron" in r.text
