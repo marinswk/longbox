@@ -8,6 +8,16 @@
       </p>
     </div>
   {% endif %}
+  {% if unreachable %}
+    <div class="mb-4 rounded-lg border-2 border-red-700 bg-red-50 p-3 text-xs">
+      <p class="font-semibold uppercase tracking-wide text-red-800">⚠ Some sources unreachable</p>
+      <p class="mt-1 text-gray-700">
+        {% for src in unreachable %}<span class="font-mono">{{ src }}</span>{{ ", " if not loop.last }}{% endfor %}
+        — couldn't connect (the service may be down or overloaded). Results
+        below are from the sources that did respond. Try again later.
+      </p>
+    </div>
+  {% endif %}
   {% if not candidates %}
     {% if text_search %}
       {% if no_sources_selected %}

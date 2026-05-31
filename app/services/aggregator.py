@@ -47,12 +47,17 @@ class IdentifierKind(StrEnum):
 @dataclass
 class LookupResult:
     """A successful lookup may still carry warnings — for instance a source
-    hit its rate limit. The picker template renders the warnings as small
-    chips above the candidates so the user knows why their library is
-    smaller than usual."""
+    hit its rate limit, or was unreachable. The picker template renders
+    the warnings as small chips above the candidates so the user knows
+    why a source is missing from the results (rather than silently
+    assuming it had no match)."""
 
     candidates: list[LookupCandidate] = field(default_factory=list)
     rate_limited: list[str] = field(default_factory=list)
+    # Sources whose request failed outright (connection timeout, DNS,
+    # 5xx, etc.) — distinct from `rate_limited`. Lets the UI say
+    # "Metron unreachable" instead of dropping it silently.
+    unreachable: list[str] = field(default_factory=list)
 
 
 def _normalize(identifier: str) -> str:
@@ -75,10 +80,12 @@ def detect(identifier: str) -> IdentifierKind:
 
 @dataclass
 class _SourceOutcome:
-    """Either a list of candidates, a rate-limit notice, or nothing."""
+    """Either a list of candidates, a rate-limit notice, an unreachable
+    notice, or nothing."""
     label: str
     candidates: list[LookupCandidate] = field(default_factory=list)
     rate_limited: bool = False
+    unreachable: bool = False
 
 
 async def _safe(label: str, coro) -> _SourceOutcome:
@@ -88,8 +95,11 @@ async def _safe(label: str, coro) -> _SourceOutcome:
         log.info("lookup source %s rate-limited: %s", label, exc.detail)
         return _SourceOutcome(label=label, rate_limited=True)
     except Exception:
+        # Connection timeout / DNS / 5xx / parse error — the source is
+        # effectively unreachable for this request. Flag it so the UI
+        # can tell the user, instead of silently returning no results.
         log.warning("lookup source %s failed", label, exc_info=True)
-        return _SourceOutcome(label=label)
+        return _SourceOutcome(label=label, unreachable=True)
     return _SourceOutcome(label=label, candidates=_as_list(result))
 
 
@@ -104,11 +114,18 @@ def _as_list(result) -> list[LookupCandidate]:
 def _merge(*outcomes: _SourceOutcome) -> LookupResult:
     candidates: list[LookupCandidate] = []
     rate_limited: list[str] = []
+    unreachable: list[str] = []
     for o in outcomes:
         candidates.extend(o.candidates)
         if o.rate_limited:
             rate_limited.append(o.label)
-    return LookupResult(candidates=candidates, rate_limited=rate_limited)
+        if o.unreachable:
+            unreachable.append(o.label)
+    return LookupResult(
+        candidates=candidates,
+        rate_limited=rate_limited,
+        unreachable=unreachable,
+    )
 
 
 def _allowed(sources: set[str] | None, key: str) -> bool:
