@@ -9,6 +9,7 @@ Cover:   https://covers.openlibrary.org/b/isbn/<isbn>-L.jpg
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 import httpx
@@ -23,6 +24,46 @@ SOURCE = "openlibrary"
 
 def is_configured() -> bool:
     return True
+
+
+# A trailing volume marker on a trade title: the separator (space /
+# colon / comma / dash) + a marker word + everything after it.
+#   "Saga: Volume One"          -> strip ": Volume One"  -> "Saga"
+#   "Locke & Key, Vol. 1"       -> strip ", Vol. 1"       -> "Locke & Key"
+#   "The Sandman Vol. 1: …"     -> strip " Vol. 1: …"     -> "The Sandman"
+# `Compendium` / `Omnibus` / `Deluxe` are deliberately NOT markers —
+# those are distinct collected editions, not entries in the numbered
+# run, so they keep their own series identity.
+_VOLUME_MARKER = re.compile(
+    r"[\s:,\-–—]+(?:vol\.?|volume|book|part)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _derive_series(title: Optional[str]) -> Optional[str]:
+    """Best-effort series name from a trade title when Open Library
+    supplies none.
+
+    Open Library has no real series field for most comic trades, so a
+    scanned Saga / Locke & Key / Immortal Hulk collection would
+    otherwise scatter into one self-named series per volume. Stripping
+    a trailing volume marker recovers the shared series so the volumes
+    group:
+
+        "Saga, Volume Five"           -> "Saga"
+        "Immortal Hulk Vol. 3"        -> "Immortal Hulk"
+        "The Sandman Vol. 1: Preludes" -> "The Sandman"
+
+    Returns ``None`` when no volume marker is present (e.g. a Sandman
+    volume titled only by its story arc, "Dream Country") so the
+    caller's existing title-as-series fallback still applies and the
+    user can assign the series by hand."""
+    if not title:
+        return None
+    stripped = _VOLUME_MARKER.sub("", title).strip(" :,-–—")
+    if stripped and stripped != title.strip():
+        return stripped
+    return None
 
 
 def _candidate_from_book(isbn: str, item: dict[str, Any]) -> LookupCandidate:
@@ -47,11 +88,18 @@ def _candidate_from_book(isbn: str, item: dict[str, Any]) -> LookupCandidate:
     if not cover:
         cover = f"{COVERS_URL}/b/isbn/{isbn}-L.jpg?default=false"
 
+    # Prefer OL's own series field when present (rare for trades);
+    # otherwise derive one from the title so volumes group instead of
+    # scattering into one series per book.
+    series = (item.get("series") or [None])[0] if item.get("series") else None
+    if not series:
+        series = _derive_series(title)
+
     return LookupCandidate(
         source=SOURCE,
         source_id=item.get("key"),
         title=title,
-        series=(item.get("series") or [None])[0] if item.get("series") else None,
+        series=series,
         publisher=publishers[0]["name"] if publishers and isinstance(publishers[0], dict) else (publishers[0] if publishers else None),
         cover_date=item.get("publish_date"),
         description=(item.get("notes") if isinstance(item.get("notes"), str) else None),

@@ -66,17 +66,28 @@
        Both start blank so an unmodified save records "standard cover". #}
     <input type="hidden" name="variant_name" value="" />
     <input type="hidden" name="variant_cover_url" value="" />
-    {% macro field(name, label, value, type='text', placeholder='') -%}
+    {% macro field(name, label, value, type='text', placeholder='', list='') -%}
       <label class="block">
         <span class="text-xs font-semibold uppercase">{{ label }}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ value or '' }}" placeholder="{{ placeholder }}"
+               {% if list %}list="{{ list }}" autocomplete="off"{% endif %}
                class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
       </label>
     {%- endmacro %}
 
+    {# Native type-ahead for the Series field, populated from the
+       library's existing series. Lets the user pick e.g. "The Sandman"
+       when adding Vol. 2 instead of retyping it — the key to grouping
+       trades whose source (Open Library) can't supply a series. #}
+    {% if series_options %}
+    <datalist id="series-options">
+      {% for name in series_options %}<option value="{{ name }}"></option>{% endfor %}
+    </datalist>
+    {% endif %}
+
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {{ field('title', 'Title', fields.title) }}
-      {{ field('series', 'Series', fields.series, placeholder='falls back to title if empty') }}
+      {{ field('series', 'Series', fields.series, placeholder='type or pick an existing series', list='series-options') }}
       {{ field('issue_number', 'Issue #', fields.issue_number) }}
       {{ field('publisher', 'Publisher', fields.publisher) }}
       {{ field('cover_date', 'Cover date', fields.cover_date, placeholder='YYYY or YYYY-MM-DD') }}

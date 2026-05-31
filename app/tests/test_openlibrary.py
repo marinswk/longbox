@@ -69,3 +69,52 @@ def test_uses_explicit_cover_when_present():
     [c] = asyncio.run(openlibrary.search_isbn(isbn))
     assert c.cover_url == "https://covers.openlibrary.org/b/id/6327883-L.jpg"
     assert "default=false" not in c.cover_url
+
+
+def test_derive_series_strips_volume_markers():
+    """Title-derived series so Open Library trade volumes group instead
+    of scattering into one series per book."""
+    from app.services.openlibrary import _derive_series
+    assert _derive_series("Saga: Volume One") == "Saga"
+    assert _derive_series("Saga, Volume Five") == "Saga"
+    assert _derive_series("Saga, Book Two") == "Saga"
+    assert _derive_series("Locke & Key, Vol. 1") == "Locke & Key"
+    assert _derive_series("Immortal Hulk Vol. 3") == "Immortal Hulk"
+    assert _derive_series("The Sandman Vol. 1: Preludes & Nocturnes") == "The Sandman"
+
+
+def test_derive_series_returns_none_without_marker():
+    """No volume marker -> None, so the title-as-series fallback applies
+    and the user can assign the series by hand. Compendium / Omnibus
+    editions are intentionally kept distinct from the numbered run."""
+    from app.services.openlibrary import _derive_series
+    assert _derive_series("Preludes & Nocturnes") is None
+    assert _derive_series("Saga, Compendium One") is None
+    assert _derive_series("Immortal Hulk Omnibus") is None
+    assert _derive_series("Locke & Key") is None
+    assert _derive_series(None) is None
+    assert _derive_series("") is None
+
+
+@respx.mock
+def test_search_isbn_derives_series_when_ol_has_none():
+    """End-to-end: an OL trade with no series field gets a derived one
+    so a whole TPB run groups under a single series."""
+    isbn = "9781607066019"
+    respx.get("https://openlibrary.org/api/books").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                f"ISBN:{isbn}": {
+                    "title": "Saga",
+                    "subtitle": "Volume One",
+                    "publishers": [{"name": "Image Comics"}],
+                    "key": "/books/OLsaga1",
+                }
+            },
+        )
+    )
+    import asyncio
+    [c] = asyncio.run(openlibrary.search_isbn(isbn))
+    assert c.title == "Saga: Volume One"
+    assert c.series == "Saga"
