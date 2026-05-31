@@ -128,6 +128,29 @@ async def _get_or_create_series(
     await session.flush()
     return s
 
+
+async def _list_series_names(session: AsyncSession, limit: int = 1000) -> list[str]:
+    """Distinct, alphabetically-sorted series names for the confirm-page
+    Series autocomplete. Cheap single-column query; capped so a huge
+    library doesn't bloat the rendered <datalist>."""
+    rows = (await session.exec(
+        select(Series.name).where(Series.name.is_not(None))
+        .order_by(Series.name).limit(limit)
+    )).all()
+    # Dedup case-insensitively while preserving the first-seen casing.
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in rows:
+        n = name if isinstance(name, str) else (name[0] if name else None)
+        if not n:
+            continue
+        key = n.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
+
 router = APIRouter(tags=["add"])
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -851,6 +874,11 @@ async def add_confirm(
     # list when the source/candidate doesn't expose a gallery.
     candidate = await _refetch_candidate(source, source_id)
     cover_variants = (candidate.cover_variants if candidate else [])
+    # Existing series names power the autocomplete on the Series field.
+    # Lets the user pick "The Sandman" when adding Vol. 2 instead of
+    # retyping it — important for sources (Open Library) that can't
+    # reliably derive a series, so volumes would otherwise scatter.
+    series_options = await _list_series_names(session)
     return templates.TemplateResponse(
         request, "partials/_confirm.html",
         {
@@ -858,6 +886,7 @@ async def add_confirm(
             "fandoms": fandoms,
             "current_fandom": current_fandom,
             "cover_variants": cover_variants,
+            "series_options": series_options,
         },
     )
 

@@ -79,6 +79,28 @@ def test_confirm_partial_renders_editable_fields():
         assert 'name="issue_number"' in r.text
 
 
+def test_confirm_offers_series_autocomplete_from_existing_series():
+    """The confirm page's Series field is backed by a <datalist> of the
+    library's existing series, so a user adding e.g. Sandman Vol. 2 can
+    pick 'The Sandman' instead of retyping it — the key to grouping
+    trades whose source can't supply a series."""
+    with _client() as client:
+        # Seed a series by saving one comic into it.
+        client.post("/add/save", data={
+            "title": "AC Seed", "isbn_13": "9780000770001",
+            "series": "AC Datalist Series", "publisher": "AC Pub",
+        })
+        r = client.post("/add/confirm", data={
+            "title": "AC Vol 2", "isbn_13": "9780000770002", "source": "openlibrary",
+        })
+        assert r.status_code == 200
+        # The Series input is wired to the datalist…
+        assert 'list="series-options"' in r.text
+        assert '<datalist id="series-options">' in r.text
+        # …and the existing series is offered as an option.
+        assert "AC Datalist Series" in r.text
+
+
 def test_save_falls_back_to_title_as_series_when_publisher_set():
     """OL gives publisher but no series for trades; we promote title→series
     so the comic is attached to a Publisher row via Series."""

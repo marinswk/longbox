@@ -67,7 +67,8 @@ with every Comic field editable:
 
 | Field | Notes |
 |---|---|
-| Title, Issue number, Series, Publisher | Free-form. Series + publisher get find-or-create handling. |
+| Title, Issue number, Publisher | Free-form. Publisher gets find-or-create handling. |
+| **Series** (autocomplete) | Find-or-create, backed by a type-ahead of your existing series — see below. |
 | **Variant cover picker** | Horizontal strip of every variant the source exposes — see below. |
 | Cover date | Full date or just a year. |
 | Pages, Cover price (EUR) | Optional. |
@@ -76,6 +77,39 @@ with every Comic field editable:
 | Description | Multi-line. |
 | **Fandom picker** | See below. |
 | Price paid | Stored on the Copy, not the Comic. |
+
+### Series autocomplete (grouping trades)
+
+The **Series** field on the confirm page is a type-ahead backed by
+every series already in your library. Start typing and matching series
+appear; pick one to drop the new comic straight into it.
+
+This matters most for **non-Star-Wars trades**. Star Wars metadata
+comes from Wookieepedia, which supplies a clean series name, so SW
+comics group automatically. But trade paperbacks from other publishers
+resolve via **Open Library**, which often has no series field at all —
+without help, a scanned *Saga* or *Sandman* collection would scatter
+into one self-named series per volume.
+
+Two things mitigate this:
+
+1. **Title-derived series.** When Open Library gives no series, Longbox
+   strips a trailing volume marker from the title to recover one:
+   `"Saga, Volume Five"` → series **"Saga"**, `"Locke & Key, Vol. 1"`
+   → **"Locke & Key"**. This auto-groups the common
+   `"<Series> Vol. N"` title shape (most Image / Marvel TPBs).
+   `Compendium` / `Omnibus` editions are intentionally kept as their
+   own series rather than folded into the numbered run.
+
+2. **The autocomplete** covers what derivation can't. Some series
+   (e.g. *The Sandman*) are stored by Open Library under each volume's
+   arc title only — `"Preludes & Nocturnes"`, `"Dream Country"` — with
+   no "Sandman" anywhere to derive from. Type the real series name once
+   for the first volume; for the rest, pick it from the dropdown so
+   every volume lands in the same series.
+
+(If a run has already scattered, the series **Merge** tool on
+`/series/{id}` collapses them after the fact.)
 
 ### Variant cover picker
 
