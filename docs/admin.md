@@ -3,7 +3,39 @@
 `/admin` is the data-management hub. A sticky pill-strip sub-nav at the
 top jumps to anchored sections:
 
-📦 Backup · ⏪ Restore · 📤 Export · 📥 Import · 🧹 Cleanup · ☢ Danger zone
+🔌 Sources · 📦 Backup · ⏪ Restore · 📤 Export · 📥 Import · 🧹 Cleanup · ☢ Danger zone
+
+## Sources (API keys)
+
+Manage the optional API credentials for the metadata sources — without
+touching the environment or redeploying.
+
+- **ComicVine** — paste your API key.
+- **Metron** — username + password (HTTP Basic auth; it's your account
+  login, not a separate token).
+- **Wookieepedia** and **Open Library** need no key and are always on.
+
+Behaviour:
+
+- **Saved values take effect immediately** — the runtime credential
+  cache re-hydrates on save, so a newly-added key flips the source to
+  "configured" without a restart (the `/add` source checkboxes light up
+  right away).
+- **Precedence: a value saved here overrides the matching environment
+  variable.** Existing env-configured deployments keep working untouched;
+  set a key here and you can then drop the env var.
+- **Blank field = keep current value** — the secret is never re-rendered
+  or required to be re-typed. A per-source **Clear** checkbox deletes the
+  stored value (falling back to env, or unconfigured).
+- **Status is masked** — the page shows `configured ✓ (••••1845) · db`
+  (or `· env`), never the raw secret.
+
+⚠️ Stored as **plain text** in the app database (`/data/longbox.db`) —
+the same exposure as the `.env` file it replaces, acceptable for the
+single-user LAN model. Credentials are deliberately **excluded from
+backups/exports** (so a shared backup zip can't leak live keys) and
+**survive a factory wipe** (they're config, not library data). After
+restoring a backup onto a fresh box, re-enter the keys here.
 
 ## Backup
 

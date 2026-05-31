@@ -1,0 +1,80 @@
+{# API-key form + status. Rendered inline on /admin and swapped in as
+   the response to POST /admin/api-keys. Never renders a raw secret —
+   only a masked tail + where the value comes from (db / env). #}
+
+{% if saved %}
+<div class="mb-3 rounded-lg border-2 border-green-700 bg-green-50 px-3 py-2 text-xs text-green-800">
+  ✓ Saved. New credentials are live immediately — no restart needed.
+</div>
+{% endif %}
+
+{% macro status_chip(s) -%}
+  {% if s.configured %}
+    <span class="inline-flex items-center gap-1 rounded-full border border-green-700 bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-800">
+      configured ✓ {% if s.masked %}<span class="font-mono">{{ s.masked }}</span>{% endif %}
+      <span class="text-green-600">· {{ s.source }}</span>
+    </span>
+  {% else %}
+    <span class="inline-flex items-center rounded-full border border-gray-400 bg-gray-50 px-2 py-0.5 text-[11px] font-semibold text-gray-500">
+      not set
+    </span>
+  {% endif %}
+{%- endmacro %}
+
+<form hx-post="/admin/api-keys" hx-target="#api-keys" hx-swap="innerHTML"
+      class="space-y-5">
+
+  {# ── ComicVine ── #}
+  <fieldset class="rounded-xl border-2 border-black p-4">
+    <legend class="px-2 text-sm font-semibold">ComicVine {{ status_chip(creds.comicvine) }}</legend>
+    <label class="block text-xs">
+      <span class="font-semibold uppercase">API key</span>
+      <input type="password" name="comicvine_api_key" autocomplete="off"
+             placeholder="{{ 'leave blank to keep' if creds.comicvine.configured else 'paste your ComicVine API key' }}"
+             class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+    </label>
+    {% if creds.comicvine.configured %}
+    <label class="mt-2 flex items-center gap-2 text-xs text-red-700">
+      <input type="checkbox" name="clear_comicvine" value="on" class="lb-mini-tap" />
+      Clear stored key (fall back to env / unconfigured)
+    </label>
+    {% endif %}
+    <p class="mt-1 text-[11px] text-gray-500">
+      Free key at <span class="font-mono">comicvine.gamespot.com/api</span>. 200 req/hr.
+    </p>
+  </fieldset>
+
+  {# ── Metron (user + pass) ── #}
+  <fieldset class="rounded-xl border-2 border-black p-4">
+    <legend class="px-2 text-sm font-semibold">Metron {{ status_chip(creds.metron_user) }}</legend>
+    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <label class="block text-xs">
+        <span class="font-semibold uppercase">Username</span>
+        <input type="text" name="metron_user" autocomplete="off"
+               placeholder="{{ 'leave blank to keep' if creds.metron_user.configured else 'metron username' }}"
+               class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+      </label>
+      <label class="block text-xs">
+        <span class="font-semibold uppercase">Password</span>
+        <input type="password" name="metron_pass" autocomplete="off"
+               placeholder="{{ 'leave blank to keep' if creds.metron_pass.configured else 'metron password' }}"
+               class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+      </label>
+    </div>
+    {% if creds.metron_user.configured or creds.metron_pass.configured %}
+    <label class="mt-2 flex items-center gap-2 text-xs text-red-700">
+      <input type="checkbox" name="clear_metron" value="on" class="lb-mini-tap" />
+      Clear stored credentials
+    </label>
+    {% endif %}
+    <p class="mt-1 text-[11px] text-gray-500">
+      Free account at <span class="font-mono">metron.cloud</span>. This is your
+      login (HTTP Basic auth), not a separate token.
+    </p>
+  </fieldset>
+
+  <button type="submit"
+          class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
+    Save credentials
+  </button>
+</form>

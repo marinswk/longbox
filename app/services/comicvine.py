@@ -14,6 +14,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import settings
+from app.services.app_settings import CREDS
 from app.services.cache import get_or_set
 from app.services.errors import UpstreamRateLimit
 from app.services.schemas import CreatorRef, LookupCandidate
@@ -23,7 +24,9 @@ SOURCE = "comicvine"
 
 
 def is_configured() -> bool:
-    return bool(settings.comicvine_api_key)
+    # Reads the runtime cache (DB value if set, else env) so a key
+    # saved on the /admin page takes effect without a restart.
+    return bool(CREDS.comicvine_api_key)
 
 
 def _headers() -> dict[str, str]:
@@ -31,7 +34,7 @@ def _headers() -> dict[str, str]:
 
 
 def _params(extra: dict[str, Any]) -> dict[str, Any]:
-    return {"api_key": settings.comicvine_api_key, "format": "json", **extra}
+    return {"api_key": CREDS.comicvine_api_key, "format": "json", **extra}
 
 
 def _candidate_from_issue(item: dict[str, Any]) -> LookupCandidate:

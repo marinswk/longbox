@@ -268,3 +268,59 @@ def test_save_existing_increments_copy_count():
         )
         assert r.status_code == 200
         assert ">2</strong>" in r.text and " copies" in r.text
+
+
+# ── Per-source selector on the title/series text search ───────────────
+
+
+def test_add_page_renders_source_checkboxes():
+    """The /add search form shows a checkbox per text-search source.
+    Configured sources are checked; unconfigured (no key in the test
+    image) render disabled."""
+    with _client() as client:
+        page = client.get("/add").text
+        assert 'name="sources" value="wookieepedia"' in page
+        assert 'name="sources" value="comicvine"' in page
+        assert 'name="sources" value="metron"' in page
+        # Wookieepedia needs no key → always selectable. CV/Metron have
+        # no credentials in the test image → disabled.
+        assert "Search across:" in page
+
+
+def test_text_search_only_queries_selected_sources(monkeypatch):
+    """Deselecting a source drops it from the aggregator fan-out — the
+    `sources` set passed to search_text reflects exactly the ticked,
+    configured boxes."""
+    captured = {}
+
+    async def _fake_search(q, *, sources=None):
+        captured["sources"] = sources
+        from app.services.aggregator import LookupResult
+        return LookupResult(candidates=[], rate_limited=[])
+
+    monkeypatch.setattr("app.routers.add.aggregator_search_text", _fake_search)
+    with _client() as client:
+        # Only wookieepedia ticked (the only configured source in the
+        # test image anyway).
+        client.post("/add/text-search", data={"q": "saga", "sources": "wookieepedia"})
+        assert captured["sources"] == {"wookieepedia"}
+
+
+def test_text_search_no_sources_selected_shows_hint(monkeypatch):
+    """If the user unticks every source, we don't silently query all —
+    we show a 'pick a source' hint and make no aggregator call."""
+    called = {"n": 0}
+
+    async def _fake_search(q, *, sources=None):
+        called["n"] += 1
+        from app.services.aggregator import LookupResult
+        return LookupResult()
+
+    monkeypatch.setattr("app.routers.add.aggregator_search_text", _fake_search)
+    with _client() as client:
+        # A source value that isn't a real/configured source → filtered
+        # out → empty selection → hint, and no aggregator call fires.
+        r = client.post("/add/text-search", data={"q": "saga", "sources": "not-a-real-source"})
+        assert r.status_code == 200
+        assert "No source selected" in r.text
+        assert called["n"] == 0

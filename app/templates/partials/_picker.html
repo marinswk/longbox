@@ -10,12 +10,20 @@
   {% endif %}
   {% if not candidates %}
     {% if text_search %}
-      {% if q %}
+      {% if no_sources_selected %}
+        <p class="text-lg">No source selected.</p>
+        <p class="mt-2 text-sm text-gray-600">
+          Tick at least one source above to search. If ComicVine or
+          Metron are greyed out, add their API key on the
+          <a href="/admin#sources" class="font-semibold text-crawl-dark underline">Admin page</a>.
+        </p>
+      {% elif q %}
         <p class="text-lg">No matches for <code class="rounded bg-gray-100 px-2 py-1">{{ q }}</code>.</p>
         <p class="mt-2 text-sm text-gray-600">
-          Tried Wookieepedia, ComicVine, and Metron — none of them have a
-          comic whose title or series matches that string. Try a different
-          spelling, or use the identifier scanner above instead.
+          Searched {{ selected_sources | join(', ') if selected_sources else 'the selected sources' }} —
+          none have a comic whose title or series matches that string.
+          Try a different spelling, toggle more sources, or use the
+          identifier scanner above instead.
         </p>
       {% else %}
         <p class="text-lg">Type a title or series above to search.</p>
@@ -119,10 +127,14 @@
     </ul>
 
     {% if text_search and total_pages > 1 %}
+    {# Carry the source selection forward so paging doesn't silently
+       re-expand to every source. #}
+    {% set src_qs = '' %}
+    {% for s in (selected_sources or []) %}{% set src_qs = src_qs + '&sources=' + (s|urlencode) %}{% endfor %}
     <nav class="mt-8 flex items-center justify-center gap-2 text-sm">
       {% if page > 1 %}
         <button type="button"
-                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page - 1 }}"
+                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page - 1 }}{{ src_qs }}"
                 hx-target="#flow" hx-swap="innerHTML"
                 class="rounded-lg border-2 border-black bg-white px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
           ‹ Prev
@@ -131,7 +143,7 @@
       <span class="px-2 text-gray-600">Page {{ page }} of {{ total_pages }}</span>
       {% if page < total_pages %}
         <button type="button"
-                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page + 1 }}"
+                hx-get="/add/text-search?q={{ q|urlencode }}&page={{ page + 1 }}{{ src_qs }}"
                 hx-target="#flow" hx-swap="innerHTML"
                 class="rounded-lg border-2 border-black bg-white px-3 py-1 font-semibold shadow-[2px_2px_0_0_#000] transition hover:-translate-y-0.5">
           Next ›

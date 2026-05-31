@@ -727,7 +727,11 @@ async def _enrich_series_from_candidate(
 
 @router.get("/add", response_class=HTMLResponse)
 async def add_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "add.html")
+    from app.services.aggregator import text_search_sources
+    return templates.TemplateResponse(
+        request, "add.html",
+        {"search_sources": text_search_sources()},
+    )
 
 
 @router.post("/add/lookup", response_class=HTMLResponse)
@@ -760,9 +764,18 @@ async def add_text_search(
     """Free-text title / series search. Accepts both GET (used by the
     pagination links) and POST (form submit). Per-provider results are
     cached; pagination just slices the cached aggregate so flipping pages
-    is a free re-render."""
-    # FastAPI passes form fields and query params via the same arg names
-    # for api_route, but on POST we want to read the form body.
+    is a free re-render.
+
+    The `sources` multi-value param restricts the fan-out to the boxes
+    the user ticked. Only configured sources can be searched; an
+    unticked or unconfigured source makes no API call at all."""
+    from app.services.aggregator import text_search_sources
+
+    available = text_search_sources()
+    configured_keys = {s["key"] for s in available if s["configured"]}
+
+    # Read the selected sources from form (POST) or query (GET, for the
+    # pagination links which carry the selection forward).
     if request.method == "POST":
         form = await request.form()
         q = (form.get("q") or "").strip()
@@ -770,23 +783,44 @@ async def add_text_search(
             page = int(form.get("page") or "1")
         except (TypeError, ValueError):
             page = 1
+        selected_raw = form.getlist("sources")
+        sources_param_given = "sources" in form
+    else:
+        selected_raw = request.query_params.getlist("sources")
+        sources_param_given = "sources" in request.query_params
     q = (q or "").strip()
     page = max(1, page)
 
-    if not q:
-        return templates.TemplateResponse(
-            request,
-            "partials/_picker.html",
-            {
-                "identifier": "",
-                "candidates": [],
-                "rate_limited": [],
-                "text_search": True,
-                "q": "",
-            },
-        )
+    # An absent `sources` param means "first search / not yet chosen" →
+    # default to every configured source. A present-but-empty selection
+    # means the user unticked everything.
+    if sources_param_given:
+        selected = {s for s in selected_raw if s in configured_keys}
+    else:
+        selected = set(configured_keys)
 
-    result = await aggregator_search_text(q)
+    def _render(extra: dict) -> HTMLResponse:
+        base = {
+            "text_search": True,
+            "q": q,
+            "search_sources": available,
+            "selected_sources": sorted(selected),
+        }
+        base.update(extra)
+        return templates.TemplateResponse(request, "partials/_picker.html", base)
+
+    if not q:
+        return _render({"identifier": "", "candidates": [], "rate_limited": []})
+
+    if not selected:
+        # Everything unticked (or nothing configured) — don't silently
+        # query all sources; tell the user to pick one.
+        return _render({
+            "identifier": q, "candidates": [], "rate_limited": [],
+            "no_sources_selected": True,
+        })
+
+    result = await aggregator_search_text(q, sources=selected)
     total = len(result.candidates)
     page_size = TEXT_SEARCH_PAGE_SIZE
     total_pages = max(1, (total + page_size - 1) // page_size)
@@ -794,20 +828,14 @@ async def add_text_search(
     start = (page - 1) * page_size
     page_slice = result.candidates[start : start + page_size]
 
-    return templates.TemplateResponse(
-        request,
-        "partials/_picker.html",
-        {
-            "identifier": q,
-            "candidates": [c.model_dump() for c in page_slice],
-            "rate_limited": result.rate_limited,
-            "text_search": True,
-            "q": q,
-            "page": page,
-            "total_pages": total_pages,
-            "total": total,
-        },
-    )
+    return _render({
+        "identifier": q,
+        "candidates": [c.model_dump() for c in page_slice],
+        "rate_limited": result.rate_limited,
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+    })
 
 
 @router.post("/add/confirm", response_class=HTMLResponse)

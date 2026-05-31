@@ -56,7 +56,8 @@ app/
 │   └── pwa.py          /manifest.webmanifest + /sw.js + icon PNG resizing
 │
 ├── services/           pure logic, no FastAPI dependencies
-│   ├── aggregator.py            parallel multi-source lookup + ranker
+│   ├── aggregator.py            parallel multi-source lookup + ranker + text_search_sources
+│   ├── app_settings.py          DB key/value settings + runtime credential cache (CV/Metron)
 │   ├── cache.py                 MetadataCache get_or_set + prune_expired
 │   ├── canon_index.py           Wookieepedia canon-list crawler index
 │   ├── collected_issues.py      link-vs-prose classifier + coverage_titles + StoryCite
@@ -90,7 +91,7 @@ app/
 ├── static/             tiny static assets (SVG icons only)
 └── tests/              pytest suite (484 tests across 59 files)
 
-alembic/versions/       0001 → 0011 sequential migrations
+alembic/versions/       0001 → 0012 sequential migrations
 .githooks/pre-commit    prompt-injection marker scan (opt-in via core.hooksPath)
 Dockerfile              multi-stage: builder → test → runtime
 docker-compose.yml      single-container production deploy
@@ -184,6 +185,7 @@ In order, every cold start runs:
 
 ```python
 await run_migrations()                              # Alembic
+await hydrate_credentials()                         # DB→runtime source creds (fallback env)
 await prune_expired()                               # MetadataCache TTL sweep
 await backfill_wookieepedia_fandom()                # legacy SW comics → fandom
 await backfill_normalize_format()                   # lowercase Comic.format
@@ -216,6 +218,7 @@ All idempotent. All cheap on a steady-state DB.
 | 0009 | ComicSeries link table (multi-series membership) |
 | 0010 | Series.canceled_issues |
 | 0011 | Variant covers (Comic.cover_variants_json + Copy.variant_name + .variant_cover_url) |
+| 0012 | Setting key/value table (DB-backed ComicVine / Metron credentials) |
 
 Migrations under `0003` + `0004` permanently dropped features — see
 [`ROADMAP.md`](../ROADMAP.md) for the "out of scope" list.

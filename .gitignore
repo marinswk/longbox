@@ -16,3 +16,5 @@ data/
 
 # Claude Code local settings (per-machine; not portable)
 .claude/settings.local.json
+# Claude Code local worktrees / scratch (per-machine, embedded git repos)
+.claude/worktrees/

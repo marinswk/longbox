@@ -27,6 +27,7 @@
 {# ───────────────────  Sub-nav (anchor pills)  ─────────────────── #}
 <nav class="sticky top-2 z-10 mt-4 -mx-1 flex flex-wrap gap-2 px-1">
   {% set sub_nav = [
+    ('#sources', '🔌 Sources'),
     ('#backup',  '📦 Backup'),
     ('#restore', '⏪ Restore'),
     ('#export',  '📤 Export'),
@@ -41,6 +42,26 @@
     </a>
   {% endfor %}
 </nav>
+
+{# ───────────────────────  SOURCES / API KEYS  ─────────────────────── #}
+<section id="sources" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">
+  <h3 class="font-display text-2xl tracking-wide">SOURCES</h3>
+  <p class="mt-2 text-sm text-gray-700">
+    Optional API credentials for the metadata sources. Saving here
+    stores them in the database and they take effect immediately — no
+    redeploy. A value set here overrides the matching environment
+    variable; leave a field blank to keep the current value.
+    Wookieepedia and Open Library need no key and are always on.
+  </p>
+  <p class="mt-2 text-xs text-gray-500">
+    Stored as plain text in the app database (same exposure as the
+    <span class="font-mono">.env</span> file). Not included in backups —
+    re-enter them after a restore.
+  </p>
+  <div id="api-keys" class="mt-4">
+    {% include "partials/_api_keys.html" %}
+  </div>
+</section>
 
 {# ───────────────────────  BACKUP  ─────────────────────── #}
 <section id="backup" class="panel mt-6 scroll-mt-24 rounded-3xl p-6">

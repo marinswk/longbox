@@ -190,6 +190,23 @@ class MetadataCache(SQLModel, table=True):
     fetched_at: datetime = Field(default_factory=_utcnow)
 
 
+class Setting(SQLModel, table=True):
+    """Generic key/value application settings persisted in the DB.
+
+    Currently backs the upstream-source credentials (ComicVine API
+    key, Metron username/password) so they can be managed from the
+    /admin page instead of only via environment variables. Values are
+    stored as plain strings — the same plaintext exposure as the
+    `.env` file they replace, acceptable for the single-user LAN
+    deploy model. Intentionally excluded from factory-wipe (config,
+    not library data) and from backups/exports (don't ship live
+    credentials inside a shareable zip)."""
+
+    key: str = Field(primary_key=True)
+    value: Optional[str] = None
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 # ---------------------------------------------------------------------------
 # CSV import wizard
 # ---------------------------------------------------------------------------

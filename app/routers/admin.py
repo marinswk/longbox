@@ -52,13 +52,59 @@ COVERS_PREFIX = "covers/"
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request, flash: str = "") -> HTMLResponse:
     from app.version import __version__
+    from app.services.app_settings import credentials_status
     return templates.TemplateResponse(
         request, "admin.html",
         {
             "export_version": EXPORT_VERSION,
             "app_version": __version__,
             "flash": flash[:200],
+            "creds": await credentials_status(),
         },
+    )
+
+
+@router.post("/admin/api-keys", response_class=HTMLResponse)
+async def admin_save_api_keys(
+    request: Request,
+    comicvine_api_key: str = Form(""),
+    metron_user: str = Form(""),
+    metron_pass: str = Form(""),
+    clear_comicvine: str = Form(""),
+    clear_metron: str = Form(""),
+) -> HTMLResponse:
+    """Persist source credentials to the DB and re-hydrate the runtime
+    cache so they take effect immediately (no restart).
+
+    A blank field means "keep the current value" — so the secret never
+    has to be re-typed or re-rendered. The explicit `clear_*` checkboxes
+    delete the stored value (falling back to env, or unconfigured).
+    """
+    from app.services.app_settings import (
+        KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS,
+        credentials_status, set_value, hydrate_credentials,
+    )
+
+    # ComicVine.
+    if clear_comicvine == "on":
+        await set_value(KEY_COMICVINE_API_KEY, None)
+    elif comicvine_api_key.strip():
+        await set_value(KEY_COMICVINE_API_KEY, comicvine_api_key)
+
+    # Metron (user + pass managed together).
+    if clear_metron == "on":
+        await set_value(KEY_METRON_USER, None)
+        await set_value(KEY_METRON_PASS, None)
+    else:
+        if metron_user.strip():
+            await set_value(KEY_METRON_USER, metron_user)
+        if metron_pass.strip():
+            await set_value(KEY_METRON_PASS, metron_pass)
+
+    await hydrate_credentials()
+    return templates.TemplateResponse(
+        request, "partials/_api_keys.html",
+        {"creds": await credentials_status(), "saved": True},
     )
 
 

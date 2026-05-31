@@ -115,30 +115,46 @@
       Or search by title / series
     </summary>
     <p class="mt-2 text-xs text-gray-600">
-      Free-text search across Wookieepedia, ComicVine and Metron. Returns
-      up to 60 candidates paginated 12 at a time.
+      Free-text search across the selected sources. Returns up to 60
+      candidates paginated 12 at a time.
     </p>
     <form
-      class="mt-3 flex flex-col gap-3 sm:flex-row"
+      class="mt-3 flex flex-col gap-3"
       hx-post="/add/text-search"
       hx-target="#flow"
       hx-swap="innerHTML"
       hx-indicator="#search-indicator"
       hx-disabled-elt="find button"
     >
-      <input
-        type="text"
-        name="q"
-        autocomplete="off"
-        placeholder="Saga, Y The Last Man, Brian K. Vaughan…"
-        class="flex-1 rounded-lg border-2 border-black px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl"
-      />
-      <button
-        type="submit"
-        class="rounded-lg border-2 border-black bg-crawl px-5 py-2.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5"
-      >
-        Search
-      </button>
+      {# Per-source toggles. Configured sources start checked; an
+         unconfigured source (no API key) is disabled with a hint and
+         can't be selected until its key is set on the Admin page. #}
+      <fieldset class="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span class="text-xs font-semibold uppercase text-gray-600">Search across:</span>
+        {% for s in search_sources %}
+        <label class="inline-flex items-center gap-1.5 text-xs {{ 'text-gray-400' if not s.configured else '' }}"
+               {% if not s.configured %}title="No API key — set it on the Admin page to enable."{% endif %}>
+          <input type="checkbox" name="sources" value="{{ s.key }}" class="lb-mini-tap"
+                 {% if s.configured %}checked{% else %}disabled{% endif %} />
+          {{ s.name }}{% if not s.configured %} <span class="text-[10px]">(no key)</span>{% endif %}
+        </label>
+        {% endfor %}
+      </fieldset>
+      <div class="flex flex-col gap-3 sm:flex-row">
+        <input
+          type="text"
+          name="q"
+          autocomplete="off"
+          placeholder="Saga, Y The Last Man, Brian K. Vaughan…"
+          class="flex-1 rounded-lg border-2 border-black px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-crawl"
+        />
+        <button
+          type="submit"
+          class="rounded-lg border-2 border-black bg-crawl px-5 py-2.5 text-sm font-semibold text-black shadow-[3px_3px_0_0_#000] transition hover:-translate-y-0.5"
+        >
+          Search
+        </button>
+      </div>
     </form>
   </details>
 </section>
