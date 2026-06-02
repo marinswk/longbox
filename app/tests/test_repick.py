@@ -274,3 +274,50 @@ def test_repick_button_visible_on_detail_page():
                     series="RP Btn Series")
         r = client.get(f"/comic/{cid}")
         assert f'href="/comic/{cid}/repick"' in r.text
+
+
+def test_refresh_book_source_uses_isbn_merged_lookup(monkeypatch):
+    """Regression: refreshing an Open Library comic used to 502 because
+    `_refetch_candidate` returns None for book sources. It must instead
+    re-resolve by the comic's ISBN via the merged book lookup (which
+    also enriches a sparse record — e.g. picks up Google Books)."""
+    captured = {}
+
+    async def _fake_merged(isbn):
+        captured["isbn"] = isbn
+        return LookupCandidate(
+            source="googlebooks", source_id="GBvol",
+            title="Blue Book Volume 2: 1947", isbn_13=isbn,
+            publisher="Dark Horse Comics", description="A rich GB description.",
+            page_count=140,
+            creators=[__import__("app.services.schemas", fromlist=["CreatorRef"]).CreatorRef(
+                name="James Tynion IV", role="author")],
+        )
+
+    monkeypatch.setattr("app.services.repick._refetch_book_by_isbn", _fake_merged)
+
+    with _client() as client:
+        isbn = "9781506737751"
+        cid = _save(client, title="Blue Book Vol 2 (sparse)", isbn_13=isbn,
+                    series="Sparse", publisher="OL Pub")
+        # Make it look like an Open Library comic.
+        async def _mark_ol():
+            async with SessionLocal() as s:
+                c = await s.get(Comic, cid)
+                c.source = "openlibrary"
+                c.source_id = "/books/OL51139954M"
+                s.add(c)
+                await s.commit()
+        asyncio.run(_mark_ol())
+
+        # Refresh — must NOT 502; should re-resolve by ISBN and enrich.
+        r = client.post(f"/comic/{cid}/refresh", data={})
+        assert r.status_code == 204, r.text
+        assert captured["isbn"] == isbn
+
+        c = _comic(cid)
+        assert c.source == "googlebooks"       # adopted the richer primary
+        assert c.description == "A rich GB description."
+        # Author persisted from the refreshed candidate.
+        page = client.get(f"/comic/{cid}").text
+        assert "James Tynion IV" in page
