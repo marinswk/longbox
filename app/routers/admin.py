@@ -70,8 +70,10 @@ async def admin_save_api_keys(
     comicvine_api_key: str = Form(""),
     metron_user: str = Form(""),
     metron_pass: str = Form(""),
+    google_books_api_key: str = Form(""),
     clear_comicvine: str = Form(""),
     clear_metron: str = Form(""),
+    clear_google_books: str = Form(""),
 ) -> HTMLResponse:
     """Persist source credentials to the DB and re-hydrate the runtime
     cache so they take effect immediately (no restart).
@@ -82,6 +84,7 @@ async def admin_save_api_keys(
     """
     from app.services.app_settings import (
         KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS,
+        KEY_GOOGLE_BOOKS_API_KEY,
         credentials_status, set_value, hydrate_credentials,
     )
 
@@ -100,6 +103,12 @@ async def admin_save_api_keys(
             await set_value(KEY_METRON_USER, metron_user)
         if metron_pass.strip():
             await set_value(KEY_METRON_PASS, metron_pass)
+
+    # Google Books.
+    if clear_google_books == "on":
+        await set_value(KEY_GOOGLE_BOOKS_API_KEY, None)
+    elif google_books_api_key.strip():
+        await set_value(KEY_GOOGLE_BOOKS_API_KEY, google_books_api_key)
 
     await hydrate_credentials()
     return templates.TemplateResponse(

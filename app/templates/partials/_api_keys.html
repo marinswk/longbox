@@ -73,6 +73,30 @@
     </p>
   </fieldset>
 
+  {# ── Google Books ── #}
+  <fieldset class="rounded-xl border-2 border-black p-4">
+    <legend class="px-2 text-sm font-semibold">Google Books {{ status_chip(creds.google_books) }}</legend>
+    <label class="block text-xs">
+      <span class="font-semibold uppercase">API key</span>
+      <input type="password" name="google_books_api_key" autocomplete="off"
+             placeholder="{{ 'leave blank to keep' if creds.google_books.configured else 'paste your Google Books API key' }}"
+             class="mt-1 w-full rounded-lg border-2 border-black px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-crawl" />
+    </label>
+    {% if creds.google_books.configured %}
+    <label class="mt-2 flex items-center gap-2 text-xs text-red-700">
+      <input type="checkbox" name="clear_google_books" value="on" class="lb-mini-tap" />
+      Clear stored key
+    </label>
+    {% endif %}
+    <p class="mt-1 text-[11px] text-gray-500">
+      Best source for non-Star-Wars trades — rich descriptions, authors,
+      dates. Free key at <span class="font-mono">console.cloud.google.com</span>
+      (enable the Books API; the Volumes endpoint has no billing). Keyless
+      works but is heavily rate-limited, so the source stays off until a
+      key is set.
+    </p>
+  </fieldset>
+
   <button type="submit"
           class="rounded-lg border-4 border-black bg-crawl px-5 py-2 font-semibold text-black shadow-[4px_4px_0_0_#000] transition hover:-translate-y-0.5">
     Save credentials

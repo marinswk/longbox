@@ -861,6 +861,7 @@ async def add_confirm(
     cover_url_remote: str = Form(""),
     source: str = Form(""),
     source_id: str = Form(""),
+    creators_json: str = Form(""),
 ) -> HTMLResponse:
     fields = {
         "title": title or None,
@@ -878,6 +879,10 @@ async def add_confirm(
         "cover_url_remote": cover_url_remote or None,
         "source": source or None,
         "source_id": source_id or None,
+        # Authors/creators carried from the candidate (book sources put
+        # them here; they're not re-fetched at save). Passed straight
+        # through the confirm form to /add/save.
+        "creators_json": creators_json or None,
     }
     duplicate = await _find_duplicate(
         session,
@@ -949,6 +954,7 @@ async def add_save(
     fandom_new: str = Form(""),
     variant_name: str = Form(""),
     variant_cover_url: str = Form(""),
+    creators_json: str = Form(""),
 ) -> HTMLResponse:
     # Resolve the picker's two inputs: free-text wins over the dropdown,
     # `__NEW__` sentinel from the dropdown means "use fandom_new".
@@ -1021,6 +1027,25 @@ async def add_save(
                 await session.commit()
         if comic.cover_url_remote:
             background.add_task(_download_and_store_cover, comic.id, comic.cover_url_remote)
+
+        # Authors carried through the form from book-source candidates
+        # (Open Library / Google Books) — those aren't re-fetched below,
+        # so the form is the only path that preserves them. Idempotent
+        # with the refetch persistence for comic sources.
+        if creators_json:
+            import json as _json
+            try:
+                carried = _json.loads(creators_json)
+            except (TypeError, ValueError):
+                carried = []
+            from app.services.schemas import CreatorRef as _CreatorRef
+            refs = [
+                _CreatorRef(name=c.get("name"), role=c.get("role") or "author")
+                for c in carried
+                if isinstance(c, dict) and c.get("name")
+            ]
+            if refs:
+                await _persist_creators(session, comic.id, refs)
 
         # Pull rich data from the original cached candidate (creators, arcs,
         # extended metadata) and attach it to the freshly-saved comic.

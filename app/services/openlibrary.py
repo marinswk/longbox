@@ -9,7 +9,6 @@ Cover:   https://covers.openlibrary.org/b/isbn/<isbn>-L.jpg
 
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 import httpx
@@ -26,44 +25,10 @@ def is_configured() -> bool:
     return True
 
 
-# A trailing volume marker on a trade title: the separator (space /
-# colon / comma / dash) + a marker word + everything after it.
-#   "Saga: Volume One"          -> strip ": Volume One"  -> "Saga"
-#   "Locke & Key, Vol. 1"       -> strip ", Vol. 1"       -> "Locke & Key"
-#   "The Sandman Vol. 1: …"     -> strip " Vol. 1: …"     -> "The Sandman"
-# `Compendium` / `Omnibus` / `Deluxe` are deliberately NOT markers —
-# those are distinct collected editions, not entries in the numbered
-# run, so they keep their own series identity.
-_VOLUME_MARKER = re.compile(
-    r"[\s:,\-–—]+(?:vol\.?|volume|book|part)\b.*$",
-    re.IGNORECASE,
-)
-
-
-def _derive_series(title: Optional[str]) -> Optional[str]:
-    """Best-effort series name from a trade title when Open Library
-    supplies none.
-
-    Open Library has no real series field for most comic trades, so a
-    scanned Saga / Locke & Key / Immortal Hulk collection would
-    otherwise scatter into one self-named series per volume. Stripping
-    a trailing volume marker recovers the shared series so the volumes
-    group:
-
-        "Saga, Volume Five"           -> "Saga"
-        "Immortal Hulk Vol. 3"        -> "Immortal Hulk"
-        "The Sandman Vol. 1: Preludes" -> "The Sandman"
-
-    Returns ``None`` when no volume marker is present (e.g. a Sandman
-    volume titled only by its story arc, "Dream Country") so the
-    caller's existing title-as-series fallback still applies and the
-    user can assign the series by hand."""
-    if not title:
-        return None
-    stripped = _VOLUME_MARKER.sub("", title).strip(" :,-–—")
-    if stripped and stripped != title.strip():
-        return stripped
-    return None
+# Series derivation lives in the shared `series_naming` module so Open
+# Library, Google Books, and Metron don't each carry the regex. Kept
+# under the old private name for backward-compat with existing imports.
+from app.services.series_naming import derive_series as _derive_series  # noqa: E402
 
 
 def _candidate_from_book(isbn: str, item: dict[str, Any]) -> LookupCandidate:

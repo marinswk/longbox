@@ -9,7 +9,8 @@ aggregator under the hood.
 `/add` → the big input field.
 
 - **ISBN** — 10 or 13 digits. Trades / GNs / omnibuses. Resolved via
-  Wookieepedia (best for SW) + Open Library (everything else).
+  Wookieepedia (best for SW) + Open Library + Google Books (for
+  everything else — see *Combined book results* below).
 - **UPC** — 12 or 17–18 digits. Single-issue barcodes. Resolved via
   Metron (best for indies and Big Two) + Wookieepedia (SW articles often
   list the UPC). 17–18-digit UPCs include the variant suffix.
@@ -20,6 +21,25 @@ Hit **Look up** → candidates from every responding source appear. Each
 candidate card shows the cover, title, series, publisher, cover date, and
 which source supplied it. Click **Save this one** → you land on the
 candidate-picker confirm page with editable fields.
+
+### Combined book results (Open Library + Google Books)
+
+For a non-SW ISBN, **Open Library** and **Google Books** both describe
+the same physical book — but with complementary gaps. Open Library
+often has a cover but a near-empty record; Google Books has a full
+author list, publisher, exact date, and a real description, but
+sometimes no cover.
+
+Rather than show two thin near-duplicate cards, Longbox **merges them
+into one enriched candidate** labelled **"Open Library + Google Books"**:
+the longest description, the most precise date, a real (non-placeholder)
+cover, the union of authors, and so on. The authors flow through to the
+saved comic as creator credits. The result is the most complete single
+record the two sources can produce.
+
+Google Books is **gated on an API key** (keyless is too rate-limited to
+rely on) — add it on **Admin → Sources**. Until then, ISBN lookups use
+Wookieepedia + Open Library only.
 
 ## 2. Free-text search
 

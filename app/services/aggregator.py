@@ -30,7 +30,8 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.services import comicvine, metron, openlibrary, wookieepedia
+from app.services import comicvine, googlebooks, metron, openlibrary, wookieepedia
+from app.services.candidate_merge import merge_book_candidates
 from app.services.errors import UpstreamRateLimit
 from app.services.schemas import LookupCandidate
 
@@ -150,8 +151,14 @@ async def lookup_full(identifier: str, *, sources: set[str] | None = None) -> Lo
             coros.append(_safe("wookieepedia", wookieepedia.search_isbn(ident)))
         if _allowed(sources, "openlibrary"):
             coros.append(_safe("openlibrary", openlibrary.search_isbn(ident)))
+        if _allowed(sources, "googlebooks"):
+            coros.append(_safe("googlebooks", googlebooks.search_isbn(ident)))
         outcomes = await asyncio.gather(*coros) if coros else []
-        return _merge(*outcomes)
+        result = _merge(*outcomes)
+        # Combine Open Library + Google Books records for the same ISBN
+        # into one enriched candidate (each fills the other's gaps).
+        result.candidates = merge_book_candidates(result.candidates)
+        return result
 
     if kind is IdentifierKind.UPC:
         coros = []
@@ -179,12 +186,14 @@ async def lookup(identifier: str) -> list[LookupCandidate]:
 
 
 async def search_text(query: str, *, sources: set[str] | None = None) -> LookupResult:
-    """Free-text search across Wookieepedia + ComicVine + Metron.
+    """Free-text search across Wookieepedia + ComicVine + Metron +
+    Google Books.
 
     Each provider returns up to its own per-source cap (typically 20).
-    Results are concatenated in source-priority order: Wookieepedia,
-    then ComicVine, then Metron. Open Library is intentionally skipped
-    for text search because its corpus is dominated by non-comic books.
+    Results are concatenated in source-priority order. Open Library is
+    excluded (ISBN-only — its text corpus is mostly non-comic books);
+    Google Books, by contrast, has strong general search that helps
+    non-Star-Wars trade lookups.
 
     `sources`, when given, restricts the fan-out — see `lookup_full`.
 
@@ -202,6 +211,8 @@ async def search_text(query: str, *, sources: set[str] | None = None) -> LookupR
         coros.append(_safe("comicvine",   comicvine.search_text(q)))
     if _allowed(sources, "metron"):
         coros.append(_safe("metron",      metron.search_text(q)))
+    if _allowed(sources, "googlebooks"):
+        coros.append(_safe("googlebooks", googlebooks.search_text(q)))
     outcomes = await asyncio.gather(*coros) if coros else []
     return _merge(*outcomes)
 
@@ -216,6 +227,7 @@ _SOURCE_PRIORITY = {
     "comicvine": 1,
     "metron": 2,
     "openlibrary": 3,
+    "googlebooks": 4,
 }
 
 
@@ -225,6 +237,7 @@ _TEXT_SEARCH_SOURCES = [
     ("wookieepedia", "Wookieepedia"),
     ("comicvine", "ComicVine"),
     ("metron", "Metron"),
+    ("googlebooks", "Google Books"),
 ]
 
 
@@ -238,6 +251,7 @@ def text_search_sources() -> list[dict]:
         "wookieepedia": wookieepedia.is_configured,
         "comicvine": comicvine.is_configured,
         "metron": metron.is_configured,
+        "googlebooks": googlebooks.is_configured,
     }
     return [
         {"key": key, "name": name, "configured": checks[key]()}

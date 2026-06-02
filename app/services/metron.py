@@ -176,24 +176,14 @@ def _shallow_candidate_from_list_item(item: dict[str, Any]) -> Optional[LookupCa
     )
 
 
-# Metron's `series_name` is a literal (icontains) filter on the SERIES
-# name — not a full-text search like ComicVine's. A user query like
-# "saga vol 1" therefore matches no series (the series is "Saga"; "vol 1"
-# is the volume), so we strip a trailing volume marker before filtering.
-# "Saga Vol 1" / "Saga, Volume One" / "The Sandman Vol. 1: …" → series base.
-_VOLUME_MARKER = re.compile(
-    r"[\s:,\-–—]+(?:vol\.?|volume|book|part|tp|tpb)\b.*$",
-    re.IGNORECASE,
-)
-
-
 def _series_name_for_query(query: str) -> str:
     """Reduce a user query to the series-name portion Metron can filter
-    on. Strips a trailing volume marker; returns the original (trimmed)
-    string when there's nothing to strip."""
-    q = (query or "").strip()
-    base = _VOLUME_MARKER.sub("", q).strip(" :,-–—")
-    return base or q
+    on (its `series_name` is a literal filter, not full-text). Strips a
+    trailing volume marker — "saga vol 1" → "saga" — via the shared
+    `series_naming` helper; returns the trimmed original when there's
+    nothing to strip."""
+    from app.services.series_naming import strip_volume_marker
+    return strip_volume_marker(query)
 
 
 async def search_text(query: str) -> list[LookupCandidate]:

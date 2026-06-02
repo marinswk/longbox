@@ -340,3 +340,27 @@ def test_text_search_shows_unreachable_source_warning(monkeypatch):
         assert r.status_code == 200
         assert "unreachable" in r.text.lower()
         assert "metron" in r.text
+
+
+def test_save_persists_carried_authors_as_creators():
+    """Book-source candidates (OL / Google Books) carry their authors
+    through the confirm form as `creators_json`; /add/save persists them
+    as Creator rows so they show on the comic detail page."""
+    import json
+    isbn = "9780000990011"
+    creators = json.dumps([
+        {"name": "Brian K. Vaughan", "role": "author"},
+        {"name": "Fiona Staples", "role": "author"},
+    ])
+    with _client() as client:
+        r = client.post("/add/save", data={
+            "title": "Saga: Volume One", "isbn_13": isbn,
+            "publisher": "Image Comics", "series": "Saga",
+            "creators_json": creators,
+        })
+        assert r.status_code == 200
+        comics = client.get("/api/comics", params={"limit": 500}).json()
+        cid = next(c["id"] for c in comics if c["isbn_13"] == isbn)
+        page = client.get(f"/comic/{cid}").text
+        assert "Brian K. Vaughan" in page
+        assert "Fiona Staples" in page
