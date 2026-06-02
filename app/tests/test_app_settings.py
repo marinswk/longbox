@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.services import app_settings
 from app.services.app_settings import (
-    KEY_COMICVINE_API_KEY, KEY_METRON_PASS, KEY_METRON_USER,
+    KEY_COMICVINE_API_KEY, KEY_GOOGLE_BOOKS_API_KEY,
+    KEY_METRON_PASS, KEY_METRON_USER,
 )
 
 
@@ -27,7 +28,8 @@ def _reset_credentials():
     defaults — the same baseline tests saw before this feature existed."""
     yield
     with _client():
-        for k in (KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS):
+        for k in (KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS,
+                  KEY_GOOGLE_BOOKS_API_KEY):
             asyncio.run(app_settings.set_value(k, ""))
         asyncio.run(app_settings.hydrate_credentials())
 
@@ -140,3 +142,22 @@ def test_settings_survive_factory_wipe_and_stay_out_of_export():
 
     asyncio.run(app_settings.set_value(KEY_COMICVINE_API_KEY, ""))
     asyncio.run(app_settings.hydrate_credentials())
+
+
+def test_google_books_key_managed_via_admin(monkeypatch):
+    """The Google Books key follows the same DB-backed admin flow:
+    saving flips googlebooks.is_configured() on, masked in the status."""
+    from app.services import googlebooks
+    from app.services.app_settings import KEY_GOOGLE_BOOKS_API_KEY
+    monkeypatch.setattr(app_settings.settings, "google_books_api_key", None)
+    with _client() as client:
+        asyncio.run(app_settings.set_value(KEY_GOOGLE_BOOKS_API_KEY, ""))
+        asyncio.run(app_settings.hydrate_credentials())
+        assert googlebooks.is_configured() is False
+
+        r = client.post("/admin/api-keys", data={"google_books_api_key": "gb-key-7777"})
+        assert r.status_code == 200
+        assert googlebooks.is_configured() is True
+        # Status section masks it.
+        assert "••••7777" in client.get("/admin").text
+        assert "gb-key-7777" not in client.get("/admin").text

@@ -130,6 +130,7 @@ Every key is optional except `DATA_DIR` (defaults to `/data`).
 | `COMICVINE_API_KEY` | unset | Enables the ComicVine source. Free key at comicvine.gamespot.com. *Can also be set on the Admin → Sources page (DB value overrides this).* |
 | `COMICVINE_USER_AGENT` | `Longbox/1.1 (+https://github.com/marinswk/longbox)` | CV requires a non-default UA. |
 | `METRON_USER` / `METRON_PASS` | unset | Enables the Metron source. Free account at metron.cloud. *Can also be set on the Admin → Sources page.* |
+| `GOOGLE_BOOKS_API_KEY` | unset | Enables the Google Books source (rich non-SW trade metadata). Free key, no billing on the Volumes API. *Can also be set on the Admin → Sources page.* |
 | `METADATA_CACHE_TTL_DAYS` | `30` | Upstream lookups are cached this long. Lifespan prune deletes older rows on every cold start. |
 | `ALLOWED_HOSTS` | `*` | Comma-separated TrustedHostMiddleware allowlist. Tighten when fronted by a reverse proxy. |
 | `CSRF_ALLOWED_ORIGINS` | unset | Comma-separated `scheme://host[:port]` allowlist. When set, blocks cross-origin non-GET requests (CSRF guard). Recommended for any deploy beyond localhost. |

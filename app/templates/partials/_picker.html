@@ -92,7 +92,10 @@
             <div class="h-32 w-24 flex-none rounded border-2 border-black bg-gray-100"></div>
           {% endif %}
           <div class="min-w-0 flex-1">
-            <p class="text-xs font-semibold uppercase tracking-wide text-crawl-dark">{{ c.source }}</p>
+            {% set merged = (c.raw or {}).get('merged_from') %}
+            <p class="text-xs font-semibold uppercase tracking-wide text-crawl-dark">
+              {% if merged %}{{ merged | map('replace', 'googlebooks', 'Google Books') | map('replace', 'openlibrary', 'Open Library') | join(' + ') }}{% else %}{{ c.source }}{% endif %}
+            </p>
             <p class="truncate font-semibold" title="{{ c.title or c.series or '(untitled)' }}">{{ c.title or c.series or '(untitled)' }}</p>
             {% if c.series and c.title and c.series != c.title %}
               <p class="truncate text-sm text-gray-700" title="{{ c.series }}">{{ c.series }}{% if c.issue_number %} #{{ c.issue_number }}{% endif %}</p>
@@ -112,6 +115,12 @@
         >
           <input type="hidden" name="source" value="{{ c.source or '' }}" />
           <input type="hidden" name="source_id" value="{{ c.source_id or '' }}" />
+          {# Carry the authors/creators through confirm → save. Book
+             sources (OL / Google Books) put them on the candidate but
+             aren't re-fetched at save time, so the form is the only
+             path that preserves them. Single-quoted so the JSON's
+             double quotes don't break the attribute. #}
+          <input type="hidden" name="creators_json" value='{{ c.creators | tojson }}' />
           <input type="hidden" name="title" value="{{ c.title or '' }}" />
           <input type="hidden" name="series" value="{{ c.series or '' }}" />
           <input type="hidden" name="issue_number" value="{{ c.issue_number or '' }}" />

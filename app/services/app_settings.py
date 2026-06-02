@@ -36,8 +36,12 @@ from app.models import Setting
 KEY_COMICVINE_API_KEY = "comicvine_api_key"
 KEY_METRON_USER = "metron_user"
 KEY_METRON_PASS = "metron_pass"
+KEY_GOOGLE_BOOKS_API_KEY = "google_books_api_key"
 
-CREDENTIAL_KEYS = (KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS)
+CREDENTIAL_KEYS = (
+    KEY_COMICVINE_API_KEY, KEY_METRON_USER, KEY_METRON_PASS,
+    KEY_GOOGLE_BOOKS_API_KEY,
+)
 
 
 @dataclass
@@ -46,6 +50,7 @@ class _RuntimeCredentials:
     comicvine_api_key: Optional[str] = None
     metron_user: Optional[str] = None
     metron_pass: Optional[str] = None
+    google_books_api_key: Optional[str] = None
 
 
 # Process-global. Initialised from env so imports work before the
@@ -55,6 +60,7 @@ CREDS = _RuntimeCredentials(
     comicvine_api_key=settings.comicvine_api_key,
     metron_user=settings.metron_user,
     metron_pass=settings.metron_pass,
+    google_books_api_key=settings.google_books_api_key,
 )
 
 
@@ -109,6 +115,9 @@ async def hydrate_credentials() -> None:
     CREDS.comicvine_api_key = stored[KEY_COMICVINE_API_KEY] or settings.comicvine_api_key
     CREDS.metron_user = stored[KEY_METRON_USER] or settings.metron_user
     CREDS.metron_pass = stored[KEY_METRON_PASS] or settings.metron_pass
+    CREDS.google_books_api_key = (
+        stored[KEY_GOOGLE_BOOKS_API_KEY] or settings.google_books_api_key
+    )
 
 
 async def save_credentials(
@@ -165,4 +174,7 @@ async def credentials_status() -> dict[str, dict]:
         "comicvine": _status(stored[KEY_COMICVINE_API_KEY], settings.comicvine_api_key),
         "metron_user": _status(stored[KEY_METRON_USER], settings.metron_user),
         "metron_pass": _status(stored[KEY_METRON_PASS], settings.metron_pass),
+        "google_books": _status(
+            stored[KEY_GOOGLE_BOOKS_API_KEY], settings.google_books_api_key
+        ),
     }

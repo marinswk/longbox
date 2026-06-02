@@ -65,6 +65,9 @@ app/
 │   ├── metron.py                Metron API client
 │   ├── wookieepedia.py          MediaWiki API client + infobox parser
 │   ├── openlibrary.py           OL API client (ISBN-only)
+│   ├── googlebooks.py           Google Books client (ISBN + text; key-gated)
+│   ├── candidate_merge.py       merge OL + Google Books records per ISBN
+│   ├── series_naming.py         shared volume-marker / series-name derivation
 │   ├── covers.py                cover image download + on-disk storage
 │   ├── csv_import.py            CSV parser + autosuggest matcher + translate_format
 │   ├── import_commit.py         CSV commit pipeline

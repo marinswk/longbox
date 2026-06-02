@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from app.services import comicvine, metron, openlibrary, wookieepedia
+from app.services import comicvine, googlebooks, metron, openlibrary, wookieepedia
 
 
 @dataclass
@@ -118,6 +118,17 @@ def build_source_tiles(
         default_on=_on(ol_ok and isbn_present, "openlibrary"),
         status=("Auto-selected — your CSV has ISBN/UPC values." if isbn_present
                 else "No key required. Will only match if you map ISBN-13 or UPC."),
+    ))
+
+    gb_ok = googlebooks.is_configured()
+    tiles.append(SourceTile(
+        key="googlebooks",
+        name="Google Books",
+        tagline="Rich trade metadata (descriptions, authors, dates). ISBN-matching.",
+        configured=gb_ok,
+        default_on=_on(gb_ok and isbn_present, "googlebooks"),
+        status=("API key configured — ready." if gb_ok
+                else "API key missing — add it on the Admin → Sources page."),
     ))
 
     return tiles

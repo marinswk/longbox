@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     metron_user: Optional[str] = None
     metron_pass: Optional[str] = None
 
+    # Google Books — optional ISBN/text source. Keyless works but is
+    # heavily IP-rate-limited; a key (free, no billing on the Volumes
+    # API) raises the quota. Can also be set on the Admin → Sources page
+    # (DB value overrides this).
+    google_books_api_key: Optional[str] = None
+
     metadata_cache_ttl_days: int = 30
 
     # Comma-separated allowlist for Starlette's TrustedHostMiddleware.

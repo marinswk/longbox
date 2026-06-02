@@ -13,6 +13,11 @@ touching the environment or redeploying.
 - **ComicVine** — paste your API key.
 - **Metron** — username + password (HTTP Basic auth; it's your account
   login, not a separate token).
+- **Google Books** — paste your API key. Best source for non-SW trades
+  (rich descriptions, authors, dates). Keyless works but is heavily
+  rate-limited, so the source stays off until a key is set. Free key at
+  console.cloud.google.com (enable the Books API; the Volumes endpoint
+  has no billing).
 - **Wookieepedia** and **Open Library** need no key and are always on.
 
 Behaviour:
