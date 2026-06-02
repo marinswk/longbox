@@ -250,7 +250,7 @@ def test_duplicates_page_renders_issue_level_index():
     with _client() as client:
         single_id = _save(client, title="Foo 1 single",
                           isbn_13="9783000010001",
-                          series="Foo (comic series)",
+                          series="Dupex (comic series)",
                           publisher="P")
         _set_fields(single_id, source="wookieepedia",
                     source_id="Foo 1", format="single issue")
@@ -265,7 +265,7 @@ def test_duplicates_page_renders_issue_level_index():
         async def _seed_expected():
             async with SessionLocal() as s:
                 ser = (await s.exec(
-                    select(Series).where(Series.name == "Foo (comic series)")
+                    select(Series).where(Series.name == "Dupex (comic series)")
                 )).first()
                 ser.expected_issues = "Foo 1\nFoo 2\nFoo 3"
                 s.add(ser)

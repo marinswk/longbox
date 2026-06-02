@@ -70,14 +70,26 @@ def _normalize_series_name(name: str) -> str:
       * Unicode em/en-dashes → plain hyphen
       * `--` / `---` → single hyphen
       * collapse whitespace around any hyphen (so "Foo - Bar" == "Foo-Bar")
+      * drop a trailing pure-text parenthetical alt-title
+        ("W0RLDTR33 (Worldtree)" == "W0RLDTR33") — but KEEP anything with
+        a digit, so year disambiguators stay distinct
+        ("Star Wars (2015)" != "Star Wars (2020)")
       * collapse remaining whitespace runs
     Used only for the dedup probe; the persisted name keeps the user's
     original casing/punctuation.
+
+    The parenthetical rule fixes book sources (Open Library / Google
+    Books) that title the same series inconsistently across volumes —
+    e.g. Vol. 1 "w0rldtr33" but Vols. 2–3 "W0RLDTR33 (Worldtree)" —
+    which otherwise split into two series.
     """
     s = name.lower()
     s = s.replace("—", "-").replace("–", "-")  # em + en-dash → hyphen
     s = re.sub(r"-{2,}", "-", s)               # collapse multi-hyphens
     s = re.sub(r"\s*-\s*", "-", s)             # collapse spaces AROUND a hyphen
+    # Drop a trailing parenthetical whose contents have NO digit (a text
+    # alt-title), keeping numeric ones (years / ranges / "vol. 2").
+    s = re.sub(r"\s*\([^)0-9]*\)\s*$", "", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 

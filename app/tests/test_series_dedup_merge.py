@@ -81,6 +81,41 @@ def test_get_or_create_series_normalizes_dashes_and_case():
         assert len(names) == 1, f"expected 1 dash-folded series, got {names}"
 
 
+def test_normalize_series_name_drops_text_parenthetical_keeps_year():
+    """A trailing pure-text parenthetical alt-title is folded away;
+    a numeric (year) one is preserved."""
+    from app.routers.add import _normalize_series_name
+    assert _normalize_series_name("W0RLDTR33 (Worldtree)") == \
+        _normalize_series_name("w0rldtr33")
+    assert _normalize_series_name("Saga (Compendium)") == _normalize_series_name("saga")
+    # Year disambiguators stay distinct.
+    assert _normalize_series_name("Star Wars (2015)") != \
+        _normalize_series_name("Star Wars (2020)")
+    assert _normalize_series_name("Star Wars (2015)") != _normalize_series_name("Star Wars")
+
+
+def test_get_or_create_series_folds_text_parenthetical_altitle():
+    """Book sources title the same series inconsistently across volumes
+    (Vol. 1 'w0rldtr33', Vols. 2-3 'W0RLDTR33 (Worldtree)') — they must
+    still collapse to one series, not split."""
+    with _client() as client:
+        _save(client, title="w0rldtr33, Volume 1", series="w0rldtr33",
+              publisher="Image", isbn_13="9786000333111")
+        _save(client, title="W0RLDTR33 (Worldtree) Volume 2",
+              series="W0RLDTR33 (Worldtree)",
+              publisher="Image", isbn_13="9786000333222")
+        _save(client, title="W0RLDTR33 (WorldTree) Volume 3",
+              series="W0RLDTR33 (WorldTree)",
+              publisher="Image", isbn_13="9786000333333")
+
+        async def _names():
+            async with SessionLocal() as s:
+                rows = (await s.exec(select(Series))).all()
+                return [r.name for r in rows if "w0rldtr33" in r.name.lower()]
+        names = asyncio.run(_names())
+        assert len(names) == 1, f"expected 1 folded series, got {names}"
+
+
 # ---------------------------------------------------------------------------
 # Merge tool
 # ---------------------------------------------------------------------------
