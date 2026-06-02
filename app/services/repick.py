@@ -41,6 +41,26 @@ class RepickOutcome:
     old_series_pruned: bool = False
 
 
+# Book sources are refetched by the comic's ISBN (their stored
+# `source_id` is an opaque book/volume key, and a refresh should
+# re-merge Open Library + Google Books anyway — so a refresh of a
+# sparse old Open Library comic now picks up Google Books data).
+_BOOK_SOURCES = {"openlibrary", "googlebooks"}
+
+
+async def _refetch_book_by_isbn(isbn: str):
+    """Re-resolve a book-source comic via the merged ISBN lookup, so a
+    refresh pulls the richest combined Open Library + Google Books
+    record. Returns the candidate matching the ISBN, or None."""
+    from app.services.aggregator import lookup_full
+    res = await lookup_full(isbn, sources=_BOOK_SOURCES)
+    target = (isbn or "").replace("-", "").strip()
+    for c in res.candidates:
+        if target in {c.isbn_13, c.isbn_10}:
+            return c
+    return res.candidates[0] if res.candidates else None
+
+
 async def apply_repick(
     session: AsyncSession,
     comic: Comic,
@@ -65,7 +85,29 @@ async def apply_repick(
     from app.services.csv_import import translate_format
 
     candidate = await _refetch_candidate(source, source_id)
+    # Book sources (Open Library / Google Books) aren't handled by
+    # `_refetch_candidate` (their source_id is an opaque key and they're
+    # not re-fetched at save). Refresh them via the merged ISBN lookup
+    # instead — this both fixes the old "couldn't reach openlibrary"
+    # 502 AND enriches a sparse record with Google Books data. The
+    # merged candidate may carry a richer primary source (Google Books),
+    # which we adopt.
+    if candidate is None and source in _BOOK_SOURCES:
+        isbn = (comic.isbn_13 or comic.isbn_10 or "").strip()
+        if isbn:
+            candidate = await _refetch_book_by_isbn(isbn)
+            if candidate is not None:
+                source = candidate.source or source
+                source_id = candidate.source_id or source_id
     if candidate is None:
+        if source in _BOOK_SOURCES:
+            return RepickOutcome(
+                ok=False,
+                message=(
+                    f"{source} returned nothing for this comic's ISBN. "
+                    "It may have no ISBN, or the source is down — try again later."
+                ),
+            )
         return RepickOutcome(
             ok=False,
             message=f"Couldn't reach {source} for {source_id!r}. Try again later.",
