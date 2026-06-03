@@ -197,6 +197,61 @@ def test_text_search_pagination_slices_aggregate():
         assert "Issue 13" in r2.text
 
 
+@respx.mock
+def test_text_search_pagination_preserves_source_selection():
+    """Regression: the pagination links must carry the ticked sources
+    forward. A Jinja loop-scoping bug ({% set %} inside {% for %}) once
+    dropped them, so the route saw no `sources` param and silently
+    re-expanded paging to every configured source."""
+    big_payload = {
+        "results": [
+            {"id": i, "name": f"PgIssue {i}", "issue_number": str(i),
+             "volume": {"name": "Pager Series"},
+             "image": {"super_url": f"https://cv/{i}.jpg"},
+             "publisher": {"name": "Pager Pub"}}
+            for i in range(1, 26)
+        ],
+    }
+    cv = respx.get("https://comicvine.gamespot.com/api/search/").mock(
+        return_value=httpx.Response(200, json=big_payload)
+    )
+    metron_route = respx.get("https://metron.cloud/api/issue/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    )
+    wp_route = respx.get("https://starwars.fandom.com/api.php").mock(
+        return_value=httpx.Response(200, json={"query": {"search": []}})
+    )
+
+    with _client() as client:
+        # First search with ONLY ComicVine ticked.
+        r = client.post(
+            "/add/text-search",
+            data={"q": "txtsearch-pg", "sources": ["comicvine"]},
+        )
+        assert "page 1 of 2" in r.text.lower()
+        # The Next link must carry the comicvine selection forward...
+        assert "sources=comicvine" in r.text
+        # ...and must NOT silently re-introduce the unticked sources.
+        assert "sources=metron" not in r.text
+        assert "sources=wookieepedia" not in r.text
+        # Only ComicVine was actually queried.
+        assert cv.called
+        assert not metron_route.called
+        assert not wp_route.called
+
+        # Page 2 via the GET pagination link, carrying the selection:
+        # still ComicVine-only — the other sources stay un-queried.
+        r2 = client.get(
+            "/add/text-search",
+            params=[("q", "txtsearch-pg"), ("page", "2"),
+                    ("sources", "comicvine")],
+        )
+        assert "page 2 of 2" in r2.text.lower()
+        assert "PgIssue 13" in r2.text
+        assert not metron_route.called
+        assert not wp_route.called
+
+
 def test_text_search_with_empty_query_renders_landing():
     with _client() as client:
         r = client.post("/add/text-search", data={"q": ""})

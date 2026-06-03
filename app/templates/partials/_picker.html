@@ -147,9 +147,12 @@
 
     {% if text_search and total_pages > 1 %}
     {# Carry the source selection forward so paging doesn't silently
-       re-expand to every source. #}
-    {% set src_qs = '' %}
-    {% for s in (selected_sources or []) %}{% set src_qs = src_qs + '&sources=' + (s|urlencode) %}{% endfor %}
+       re-expand to every source. NOTE: build this in a single top-level
+       {% set %}, not by accumulating inside a {% for %} loop — Jinja
+       scopes loop-body {% set %} to the iteration, so the accumulated
+       value is lost after the loop and pagination would drop the
+       filter. #}
+    {% set src_qs = ('&sources=' + (selected_sources | map('urlencode') | join('&sources='))) if selected_sources else '' %}
     <nav class="mt-8 flex items-center justify-center gap-2 text-sm">
       {% if page > 1 %}
         <button type="button"
