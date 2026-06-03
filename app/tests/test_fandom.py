@@ -192,12 +192,45 @@ def test_backfill_sets_star_wars_for_wookieepedia_sourced_comics():
     assert _comic(cid).fandom == "star wars"
 
 
-def test_list_fandoms_orders_by_count_desc():
+def test_list_fandoms_returns_name_count_tuples():
     async def _check():
         async with SessionLocal() as session:
             return await list_fandoms(session)
     with _client():
         pass
     rows = asyncio.run(_check())
-    # Just smoke — exact counts depend on prior tests in this file.
     assert all(isinstance(r, tuple) and isinstance(r[1], int) for r in rows)
+
+
+def test_list_fandoms_orders_alphabetically():
+    """The fandom-picker dropdown lists names A→Z (case-insensitive),
+    regardless of how many comics each fandom has — so a low-count
+    fandom isn't buried at the bottom."""
+    with _client() as client:
+        # Distinct prefix so the assertion survives the accumulating
+        # shared test DB. Give "zeta" the most comics, "alpha" the
+        # fewest — count order would invert the alphabetical order.
+        _save(client, title="ZF z1", isbn_13="9794500000001",
+              series="ZF Z1", fandom="zzqfandom zeta")
+        _save(client, title="ZF z2", isbn_13="9794500000002",
+              series="ZF Z2", fandom="zzqfandom zeta")
+        _save(client, title="ZF z3", isbn_13="9794500000003",
+              series="ZF Z3", fandom="zzqfandom zeta")
+        _save(client, title="ZF m1", isbn_13="9794500000004",
+              series="ZF M1", fandom="zzqfandom mid")
+        _save(client, title="ZF m2", isbn_13="9794500000005",
+              series="ZF M2", fandom="zzqfandom mid")
+        _save(client, title="ZF a1", isbn_13="9794500000006",
+              series="ZF A1", fandom="zzqfandom alpha")
+
+        async def _check():
+            async with SessionLocal() as session:
+                return await list_fandoms(session)
+        rows = asyncio.run(_check())
+
+        names = [n for (n, _) in rows]
+        # Whole list is sorted case-insensitively.
+        assert names == sorted(names, key=str.casefold)
+        # Our three land in alphabetical (NOT count) order.
+        ours = [n for n in names if n.startswith("zzqfandom ")]
+        assert ours == ["zzqfandom alpha", "zzqfandom mid", "zzqfandom zeta"]

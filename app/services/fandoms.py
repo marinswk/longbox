@@ -38,11 +38,14 @@ def display(value: str | None) -> str:
 
 
 async def list_fandoms(session: AsyncSession, *, limit: int = 50) -> list[tuple[str, int]]:
-    """Returns [(name, count), ...] sorted by descending comic count.
+    """Returns [(name, count), ...] sorted alphabetically by name.
 
-    Powers the fandom-picker dropdown in `add` / `edit` forms. Capped at
-    `limit` so heavily-saturated libraries don't ship 10k options to the
-    browser.
+    Powers the fandom-picker dropdown in `add` / `edit` forms — a
+    data-entry control where you scan for a known name, so alphabetical
+    order is far easier to navigate than count order. The `limit` cap is
+    still applied by comic count (so a heavily-saturated library keeps
+    its most-used fandoms rather than the alphabetically-first ones),
+    then the kept rows are sorted by name for display.
     """
     rows = (
         await session.exec(
@@ -53,7 +56,9 @@ async def list_fandoms(session: AsyncSession, *, limit: int = 50) -> list[tuple[
             .limit(limit)
         )
     ).all()
-    return [(name, int(n)) for (name, n) in rows]
+    pairs = [(name, int(n)) for (name, n) in rows]
+    pairs.sort(key=lambda p: (p[0] or "").casefold())
+    return pairs
 
 
 async def backfill_merge_duplicate_series() -> int:

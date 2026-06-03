@@ -171,15 +171,22 @@ async def _facets(
             fandoms=fandoms if exclude != "fandom" else (),
             q=q,
         )
+        # Pick the top-50 values by comic count (so a big library keeps
+        # its most-relevant buckets), then sort the kept rows
+        # alphabetically by value — predictable to scan when hunting for
+        # a specific filter. Years are re-sorted newest-first by the
+        # caller; the alpha sort here is a no-op for their numeric label.
         base = base.where(group_col.is_not(None)).group_by(group_col).order_by(func.count(func.distinct(Comic.id)).desc()).limit(50)
         result = await session.exec(base)
-        return [(row[0], row[1]) for row in result.all()]
+        rows = [(row[0], row[1]) for row in result.all()]
+        rows.sort(key=lambda r: str(r[0]).casefold())
+        return rows
 
     pubs = await _count(Publisher.name, exclude="publisher")
     srss = await _count(Series.name, exclude="series")
     yrs = await _count(extract("year", Comic.cover_date), exclude="year")
-    # Years read more naturally newest → oldest than by count. The _count
-    # helper sorts by count desc; re-sort here so the UI is predictable.
+    # Years read more naturally newest → oldest than alphabetically. The
+    # _count helper sorts by value; re-sort here so the UI is predictable.
     yrs = sorted(yrs, key=lambda r: int(r[0]) if r[0] is not None else 0, reverse=True)
     tgs = await _count(Tag.name, exclude="tag", extra_join="tag")
     fmts = await _count(Comic.format, exclude="format")
