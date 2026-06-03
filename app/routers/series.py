@@ -895,8 +895,11 @@ async def _build_series_index(
             "group": group,
         },
         "facets": {
-            "publishers": pub_facets.most_common(),
-            "fandoms": fan_facets.most_common(),
+            # Categorical filter facets sort alphabetically — easier to
+            # scan for a known value than count order. Statuses keep
+            # their meaningful fixed sequence (_STATUS_VALUES).
+            "publishers": sorted(pub_facets.items(), key=lambda p: (p[0] or "").casefold()),
+            "fandoms": sorted(fan_facets.items(), key=lambda p: (p[0] or "").casefold()),
             "statuses": [(k, status_facets.get(k, 0)) for k in _STATUS_VALUES],
         },
     }
