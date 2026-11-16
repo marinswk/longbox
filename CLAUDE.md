@@ -23,7 +23,8 @@ CONTRIBUTING, SECURITY).
 ## Stack — fixed decisions, don't re-litigate
 
 - **FastAPI** with async-everywhere routes. Lifespan = Alembic migrations
-  + idempotent backfills.
+  + idempotent backfills (the ones that ask Wookieepedia in a background
+  task after start-up).
 - **SQLModel + SQLite (aiosqlite).** One DB file, WAL mode. No
   PostgreSQL. No connection pool — `NullPool` to keep cold-start
   predictable.
@@ -123,7 +124,8 @@ Quick map of where the meat is. See `docs/architecture.md` for the
 full layout.
 
 - **`app/main.py`** — `create_app()` factory + `lifespan` with the
-  full backfill chain. Don't add long-running tasks here.
+  full backfill chain. Don't add long-running tasks inline; anything that
+  calls upstream goes in `_network_backfills` (background).
 - **`app/routers/`** — one file per URL family. Routes named like
   `{action}_{noun}` (`comic_repick_apply`, `import_row_search`).
 - **`app/services/aggregator.py`** — the multi-source dispatcher.
