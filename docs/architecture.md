@@ -103,7 +103,8 @@ docker-compose.yml      single-container production deploy
 ## Request lifecycle
 
 1. **Bootstrap (lifespan).** Alembic migrations run, then the backfill
-   chain (see below). All idempotent — every cold start is safe.
+   chain (see below; its Wookieepedia part in the background). All
+   idempotent — every cold start is safe.
 2. **Request.** FastAPI dependency injection hands the route an
    `AsyncSession`. Most routes are HTMX-aware: full-page render on
    navigation, partial swap on `HX-Request: true`.
@@ -198,13 +199,21 @@ await backfill_strip_multiline_names()              # legacy Series/Comic/Publis
 await backfill_merge_duplicate_series()             # merge same-name rows
 await backfill_prune_dangling_comicseries()         # drop link rows pointing at gone comics
 await backfill_comic_series_links()                 # mirror Comic.series_id into ComicSeries
+# then, in a background task after the app is up (it asks Wookieepedia):
 await backfill_inferred_series_from_collected_issues()  # auto-link trades to underlying singles
 await backfill_strip_umbrella_links_from_trades()   # drop bogus trade→umbrella links
 await backfill_strip_bogus_movie_adaptation_links() # drop bogus Movie-Adaptations links
 await backfill_prune_empty_inferred_series()        # sweep stale 0-issue rows
+await backfill_dedup_expected_issues()              # de-dup stored issue lists
 ```
 
-All idempotent. All cheap on a steady-state DB.
+All idempotent. The first group is DB-only and cheap. The second resolves
+collected-issues entries on Wookieepedia, so on a big library it can take
+minutes: it runs after start-up (`STARTUP_BACKFILLS_IN_BACKGROUND`, default
+true; the tests set it false) and the app answers meanwhile. When Fandom
+answers 429, `wookieepedia._api` starts a cool-down (`Retry-After`, else 60 s,
+at most 15 minutes) in which calls fail fast without a request, and the
+inference backfill stops; the next start continues.
 
 ## Migrations
 

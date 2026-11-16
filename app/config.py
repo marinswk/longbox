@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     metadata_cache_ttl_days: int = 30
 
+    # The start-up backfills that ask Wookieepedia run in the background
+    # after the app is up (True), or before it answers (False: the tests,
+    # which share one database and expect the backfills done).
+    startup_backfills_in_background: bool = True
+
     # Comma-separated allowlist for Starlette's TrustedHostMiddleware.
     # `*` accepts anything (default, matches the LAN-only deploy
     # model). Tighten when fronting Longbox with a reverse proxy:

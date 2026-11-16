@@ -1,4 +1,6 @@
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -81,34 +83,60 @@ async def lifespan(_app: FastAPI):
     # multi-series-aware queries (series detail, comic-detail series
     # section) see the primary series link. Idempotent.
     await backfill_comic_series_links()
-    # Walk every comic with a `collected_issues` blob and auto-attach
-    # it to every singles series implied by the entries. Idempotent;
-    # catches up legacy omnibuses / TPBs saved before save-time
-    # inference landed.
-    await backfill_inferred_series_from_collected_issues()
-    # Drop ComicSeries links between synthetic umbrella series
-    # (One-shots / FCBD / Graphic Novels — `source_id` LIKE
-    # 'Category:%') and trades that happened to collect a one-shot.
-    # The inferrer no longer creates these; this is a one-time fix.
-    await backfill_strip_umbrella_links_from_trades()
-    # Drop ComicSeries links to "Star Wars Movie Adaptations" that
-    # were auto-attached to comics whose titles don't actually denote
-    # a movie adaptation (e.g. Epic Collections that happened to
-    # collect a tie-in one-shot). The parser's film-adaptation
-    # fallback is now title-gated; this is a one-time data fix.
-    # Idempotent — no-op once the DB is clean.
-    await backfill_strip_bogus_movie_adaptation_links()
-    # Sweep up stale empty-expected-issues inference rows left over
-    # from before the "skip when issues=[]" guard. Runs AFTER the
-    # inference backfill so anything the inferrer just successfully
-    # populated stays. Idempotent.
-    await backfill_prune_empty_inferred_series()
-    # Drop duplicate lines from stored expected_issues / canceled_issues
-    # blobs (some Wookieepedia issue tables list an issue twice across
-    # overlapping TPB groupings). The read path de-dups defensively too;
-    # this keeps the stored blob + any backup/export clean. Idempotent.
-    await backfill_dedup_expected_issues()
-    yield
+    # The rest asks Wookieepedia (the inference backfill resolves every
+    # collected-issues entry) and can take minutes on a big library, or
+    # longer while Fandom throttles. It runs after start-up in the
+    # background, in the same order, so the app answers (and its health
+    # check passes) at once. Tests run it inline (the setting below).
+    async def _network_backfills() -> None:
+        # Walk every comic with a `collected_issues` blob and auto-attach
+        # it to every singles series implied by the entries. Idempotent;
+        # catches up legacy omnibuses / TPBs saved before save-time
+        # inference landed.
+        await backfill_inferred_series_from_collected_issues()
+        # Drop ComicSeries links between synthetic umbrella series
+        # (One-shots / FCBD / Graphic Novels — `source_id` LIKE
+        # 'Category:%') and trades that happened to collect a one-shot.
+        # The inferrer no longer creates these; this is a one-time fix.
+        await backfill_strip_umbrella_links_from_trades()
+        # Drop ComicSeries links to "Star Wars Movie Adaptations" that
+        # were auto-attached to comics whose titles don't actually denote
+        # a movie adaptation (e.g. Epic Collections that happened to
+        # collect a tie-in one-shot). The parser's film-adaptation
+        # fallback is now title-gated; this is a one-time data fix.
+        # Idempotent — no-op once the DB is clean.
+        await backfill_strip_bogus_movie_adaptation_links()
+        # Sweep up stale empty-expected-issues inference rows left over
+        # from before the "skip when issues=[]" guard. Runs AFTER the
+        # inference backfill so anything the inferrer just successfully
+        # populated stays. Idempotent.
+        await backfill_prune_empty_inferred_series()
+        # Drop duplicate lines from stored expected_issues / canceled_issues
+        # blobs (some Wookieepedia issue tables list an issue twice across
+        # overlapping TPB groupings). The read path de-dups defensively too;
+        # this keeps the stored blob + any backup/export clean. Idempotent.
+        await backfill_dedup_expected_issues()
+
+    if not settings.startup_backfills_in_background:
+        await _network_backfills()
+        yield
+        return
+
+    async def _run() -> None:
+        try:
+            await _network_backfills()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger("longbox.startup").exception("start-up backfills failed")
+
+    task = asyncio.create_task(_run(), name="longbox-startup-backfills")
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 _error_templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
