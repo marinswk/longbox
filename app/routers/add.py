@@ -244,6 +244,7 @@ async def _attach_inferred_series(comic_id: int) -> None:
     from app.models import ComicSeries
     from app.services.collected_issues import derive_inferred_series
     from app.services import wookieepedia
+    from app.services.errors import UpstreamRateLimit
 
     # PHASE 1 — read-only DB session: load comic state + snapshot
     # existing links + figure out which publisher to inherit. The
@@ -313,6 +314,12 @@ async def _attach_inferred_series(comic_id: int) -> None:
                     cand = await wookieepedia.get_article(t)
                     if cand is not None and cand.series:
                         return t, cand
+                except UpstreamRateLimit:
+                    # Fandom is throttling: no retry and no fallback
+                    # probes (they'd fail the same way). The comic keeps
+                    # its current links; the next save or start-up
+                    # backfill resolves it.
+                    return t, None
                 except Exception as e:
                     _lg.getLogger("longbox.infer").warning(
                         "resolution failed for %r: %r", t, e,

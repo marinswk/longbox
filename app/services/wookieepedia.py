@@ -23,6 +23,7 @@ MetadataCache (source="wookieepedia") so re-scans don't hammer Fandom.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Optional
 
 import httpx
@@ -531,9 +532,45 @@ def _headers() -> dict[str, str]:
     return {"User-Agent": settings.comicvine_user_agent, "Accept": "application/json"}
 
 
+# Cool-down after Fandom answers 429. Until it ends, `_api` fails fast with
+# UpstreamRateLimit instead of sending a request: a loop over many titles
+# (the start-up inference backfill, a big omnibus) would otherwise keep
+# hammering a throttled API, every request a fresh connection and DNS lookup,
+# which keeps the throttle going and floods the LAN's DNS server.
+THROTTLE_DEFAULT_SECONDS = 60.0
+THROTTLE_MAX_SECONDS = 900.0
+_throttled_until: float = 0.0
+
+
+def is_throttled() -> bool:
+    """True while the cool-down after Fandom's last 429 is running."""
+    return time.monotonic() < _throttled_until
+
+
+def reset_throttle() -> None:
+    """End the cool-down (tests)."""
+    global _throttled_until
+    _throttled_until = 0.0
+
+
+def _note_throttle(retry_after: Optional[str]) -> None:
+    """Start (or extend) the cool-down: `Retry-After` seconds when Fandom
+    sends them, else THROTTLE_DEFAULT_SECONDS; capped at THROTTLE_MAX_SECONDS."""
+    global _throttled_until
+    try:
+        wait = float(retry_after) if retry_after else THROTTLE_DEFAULT_SECONDS
+    except ValueError:  # an HTTP date instead of seconds
+        wait = THROTTLE_DEFAULT_SECONDS
+    wait = min(max(wait, 1.0), THROTTLE_MAX_SECONDS)
+    _throttled_until = max(_throttled_until, time.monotonic() + wait)
+
+
 async def _api(client: httpx.AsyncClient, params: dict[str, Any]) -> dict[str, Any]:
+    if is_throttled():
+        raise UpstreamRateLimit(SOURCE, "Fandom is throttling requests")
     r = await client.get(API_URL, params={**params, "format": "json"}, headers=_headers())
     if r.status_code == 429:
+        _note_throttle(r.headers.get("Retry-After"))
         raise UpstreamRateLimit(SOURCE, "Fandom is throttling requests")
     r.raise_for_status()
     return r.json()

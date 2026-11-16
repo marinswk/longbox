@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import re
 
 from sqlalchemy import update as sa_update
@@ -278,7 +280,18 @@ async def backfill_inferred_series_from_collected_issues() -> int:
     # Run per-comic in its own session — `_attach_inferred_series`
     # opens one internally — so a single misbehaving entry doesn't
     # roll back the whole backfill batch.
-    for cid in comic_ids:
+    from app.services import wookieepedia
+    for n_done, cid in enumerate(comic_ids):
+        if wookieepedia.is_throttled():
+            # Fandom answered 429: stop instead of walking the rest of
+            # the library into the same wall. Nothing is lost — the next
+            # start picks up the comics not done (each is idempotent).
+            logging.getLogger("longbox.infer").warning(
+                "Wookieepedia is throttling: inferred-series backfill "
+                "stopped after %d of %d comics; the next start continues",
+                n_done, len(comic_ids),
+            )
+            break
         try:
             # Count link rows before + after to know what we added.
             from app.models import ComicSeries
